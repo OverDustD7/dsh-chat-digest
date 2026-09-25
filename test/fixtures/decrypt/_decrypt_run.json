@@ -1,0 +1,10 @@
+{
+ "at": 1790331254,
+ "dbroot": "<fixtures>",
+ "found": 0,
+ "ok": 0,
+ "total": 1,
+ "detail": {
+  "missing.db": "missing"
+ }
+}

@@ -1,0 +1,2291 @@
+// ── A15 发布化（2026-09-25）：部署期配置 ─────────────────────────────────────
+// 本文件是**包内**的 Host 函数体，由 `lib/plugin.js` 用 `new Function('CFG', text)(cfg)` 求值；
+//   `CFG` ＝ 加载器按「包自身位置 ＋ profile 里这一行的 config」算出来的部署配置。
+//   下面每个本机常量都是「config 覆盖 → 否则退回本机缺省」，所以**换机器只改 profile 的 config**，
+//   不必改这个文件。可覆盖键见 README「配置」一节（dir / stateDir / agentCwd / dshHome /
+//   wxRoot / fileRoots / bodyPath）。
+const CF = (typeof CFG !== 'undefined' && CFG) ? CFG : {};
+//: UI 与静态资源目录（ui.js / right.js 从这里取）；加载器按自身位置算好再传进来。
+const DIR = (typeof CF.dir === 'string' && CF.dir) ? CF.dir
+  : ((typeof CF.pkgDir === 'string' && CF.pkgDir) ? CF.pkgDir + '\\lib\\' : '');
+const SCRIPT_UI = '/chat-feed/ui.js';
+const SCRIPT_RIGHT = '/chat-feed/right.js';
+const API = '/chat-feed/api/';
+// A18（2026-09-20 全量审计）：主状态原先放在**用户 Temp**（`%TEMP%\dsh-chat-digest\state.json`）——
+//   Temp 会被清理工具/系统清理，而面板条目、会话锚点、采集配置全在里面；`output\` 又不在 git，
+//   "源码提交"并不等于"数据有备份"。现在改到**持久数据根** `%LOCALAPPDATA%\dsh-chat-digest\`，
+//   并保留旧路径做一次性迁移（老状态不丢）。**注意：这只是本机持久目录，仍不是异地备份** ——
+//   恢复步骤见 `docs\DATA-DEPENDENCIES.md` §状态与恢复。
+//: 进程环境（别把用户名写死）：%LOCALAPPDATA% 是 Windows 的持久应用数据根，%TEMP% 是旧位置。
+const ENV = (typeof process !== 'undefined' && process && process.env) ? process.env : {};
+const STATE_DIR = (typeof CF.stateDir === 'string' && CF.stateDir) ? CF.stateDir
+  : ((ENV.LOCALAPPDATA || ((ENV.USERPROFILE || 'C:') + '\\AppData\\Local')) + '\\dsh-chat-digest');
+const STATE_FILE = STATE_DIR + '\\state.json';
+//: 旧位置：**只读、只用于一次性迁移**，任何时候都不删。本插件**改过名**（chat-feed → dsh-chat-digest），
+//:   所以候选有三个，按顺序试：
+//:     ① 改名前的持久位置 %LOCALAPPDATA%\\chat-feed\\state.json ← 2026-09-25 实测：这里才是真数据
+//:     ② 改名前的 Temp 位置   %TEMP%\\chat-feed\\state.json（A18 的更早来源）
+//:     ③ 改名后的 Temp 位置   %TEMP%\\dsh-chat-digest\\state.json
+//:   漏掉 ① 的后果实测过：新目录是空的 ⇒ 面板条目 17→6、采集游标清空、自定义面板回落到内置默认。
+const _TMP = ENV.TEMP || ((ENV.USERPROFILE || 'C:') + '\\AppData\\Local\\Temp');
+const _LOC = ENV.LOCALAPPDATA || ((ENV.USERPROFILE || 'C:') + '\\AppData\\Local');
+const STATE_OLD = [
+  _LOC + '\\chat-feed\\state.json',
+  _TMP + '\\chat-feed\\state.json',
+  _TMP + '\\dsh-chat-digest\\state.json',
+];
+//: 状态 schema 版本。改字段语义时 +1，并在 loadState 里补一次迁移。
+const STATE_SCHEMA = 2;
+// 主 agent 的工作区 path ＝ 它的会话 cwd（2026-09-13 迁移）：
+// DSH 沙箱只允许写「会话自己的 cwd」，而 sessionController.create 不允许同时给
+// workspaceId 和 cwd（给了 workspaceId，cwd 就取工作区 path）→ 一个常量管两件事。
+// 旧值（迁移前）：%TEMP%\\dsh-chat-digest\\agent
+const AGENT_CWD = (typeof CF.agentCwd === 'string' && CF.agentCwd) ? CF.agentCwd : STATE_DIR + '\\workspace';
+//: **默认数据来源目录**（2026-09-25「装完就能用」）：把聊天导出（*.txt / *.md / *.json）丢进这里，
+//:   通用提示词就让它去读这个目录 —— 没有取数管线的人也能端到端跑起来。可用 `config.inboxDir` 覆盖。
+const INBOX_DIR = (typeof CF.inboxDir === 'string' && CF.inboxDir) ? CF.inboxDir : AGENT_CWD + '\\inbox';
+const SESSION_TITLE = '聊天摘要 · 主 Agent';
+const WORKSPACE_TITLE = '聊天摘要';
+//: **旧名**（2026-09-25 从「聊天情报」改名）。老会话的标题仍是旧名 —— 判「是不是主 agent」时必须继续认它们，
+//: 否则它们会被当成「多余的主 agent」、两个槽也认不回来（就是 A23 那类事故）。
+const LEGACY_TITLES = ['聊天情报 · 主 Agent'];
+const FAKE_SIGNAL = { aborted: false, reason: undefined, onabort: null, throwIfAborted() {}, addEventListener() {}, removeEventListener() {}, dispatchEvent() { return true } };
+
+// ── 通用缺省提示词（发布版）──────────────────────────────────────────────────
+// **不含任何部署方的私人内容**。部署方要定制就放 `local/prompt.md`（gitignored），
+// 加载器读进来经 `CFG.wakeText` 传进来 —— 见 README「配置」。
+const WAKE_GENERIC = [
+  "【聊天摘要 · 主 Agent】",
+  "",
+  "## 你是谁",
+  "你是「聊天摘要」面板的常驻主 Agent：把**来源数据**变成面板上**有用的条目**，交给人看。",
+  "",
+  "## 数据从哪来（默认约定）",
+  "看**你工作区下的 `inbox\\` 目录**：",
+  "- 里面递归的 `*.txt` / `*.md` / `*.json` 就是来源数据 —— 聊天导出、复制来的对话、或任何文本。",
+  "- **先把 inbox 读完再动手**；目录是空的就如实回报「inbox 是空的」，**不要编造条目**。",
+  "- 如果部署方另有取数管线（脚本、数据库、别的目录），**以部署方的规程为准**，inbox 只是缺省。",
+  "",
+  "## 你的产出",
+  "一份**持续增长的面板列表**（不是每天一份独立文档）：",
+  "- 每条 ＝ **一句话总结**（第一行，说清「这条是什么」）＋ 空行 ＋ 正文；正文按信息量定，能一句话说清就一句话。",
+  "- 回写：`POST /chat-feed/api/items`（整表）或 `/items-patch`（按 id 打补丁；未提供的字段原样保留）。",
+  "- 正文里的 **加粗**、http 链接、`[名](file:相对路径)`（点一下用本机默认应用打开）、`![说明](img:相对路径)`（内嵌图）都会渲染。",
+  "- **只留对人有用的事**：要他做的动作、可以报名或申请的机会、他以后用得上的信息；纯闲聊不要进面板。",
+  "",
+  "## 面板结构由数据决定",
+  "分节写在 `panel.json`（活数据在插件数据目录）里；改结构用 `POST /api/panel/set`，**别为了加一节去改插件代码**。",
+  "未知 `kind` 会被透传，并报在 `/state.panel.unknownKinds` 里。",
+  "",
+  "## 排障先看自证字段，别读盘猜",
+  "`GET /chat-feed/api/state`：`inbox`（该读哪个目录）、`autoWhy`（最近一次自动为什么没跑）、",
+  "`pendingAsk`（它在等你答什么）、`busyFor`（这一轮发进了哪个会话）、`pendingCollect`/`resumeCount`（未交付/补跑）、",
+  "`ctxTokens`/`ctxLimit`（上下文用量）、`lastOpenOk`、`lastError`/`saveOk`（落盘结果）。",
+  "",
+  "## 硬约束",
+  "- **不要用 `ask_user_question` 阻塞自动轮**：自动轮不弹前台，问了没人答 ⇒ 整轮白跑。",
+  "- 一轮里只做这一轮该做的事；看不到来源数据就问清楚，**不要编造数据**。",
+].join('\n');const WAKE_TEXT = (typeof CF.wakeText === 'string' && CF.wakeText) ? CF.wakeText : WAKE_GENERIC;
+
+const DEMO_ITEMS = [];   // 内置演示数据已清空（2026-09-25）：新装的面板从空开始，由你的取数管线填
+
+// **默认线路（2026-09-18 用户定案：重活一律 paratera）** —— 只在这一处定义。
+//   原先这个"默认"散在三个地方各写一遍 `'thu'`（状态初始化 / pluginProbe 的默认探测目标 /
+//   `/collect` 的兜底），改一处就会与另两处不一致。收敛成一个常量。
+//   为什么是 paratera 而不是 THU：paratera 1M 窗口（实测一轮 0 次压缩）且能读图；
+//   THU 200k 会在轮中压缩一次、丢掉细节，只适合轻活与兜底。
+// ── 线路（**部署方配置**）────────────────────────────────────────────────────
+// `CFG.routes = [{ id, label, provider?, model?, effort?, probeUrl?, ctxRatio?, default? }, …]`
+// **两条线**是这个插件的设计（两个常驻会话按需切换）；只配一条也能跑。
+// 缺省＝**一条通用线路**：不指定 provider/model ⇒ 建会话时继承宿主默认，不需要任何特定账号。
+const ROUTES = (Array.isArray(CF.routes) && CF.routes.length) ? CF.routes.map(function (r, i) {
+  return Object.assign({ id: 'route' + (i + 1), label: '线路 ' + (i + 1), ctxRatio: 0.7 }, r)
+}) : [{ id: 'main', label: '默认线路', ctxRatio: 0.7, 'default': true }];
+const R0 = ROUTES[0].id;
+const R1 = (ROUTES[1] || ROUTES[0]).id;
+const routeDef = (id) => ROUTES.find(function (r) { return String(r.id) === String(id) }) || ROUTES[0];
+const routeIds = () => ROUTES.map(function (r) { return r.id });
+const DEFAULT_ROUTE = ((ROUTES.find(function (r) { return r['default'] }) || ROUTES[0]) || {}).id || R0;
+//: 每条线的模型（建会话时 selectModel 用）与探测端点；都由 ROUTES 生成，源码里不写死任何一家。
+const ROUTE_MODELS = {};
+ROUTES.forEach(function (r) { ROUTE_MODELS[r.id] = { provider: r.provider || '', model: r.model || '', effort: r.effort || '', label: r.modelLabel || r.label } });
+const PROBE_URL = {};
+ROUTES.forEach(function (r) { if (r.probeUrl) PROBE_URL[r.id] = r.probeUrl });
+//: 槽位键：**状态字段名沿用 sessThu/sessParatera**（历史字段，不动 schema），语义是"第 1/2 条线的槽"。
+const routeSlotKey = (route) => (String(route) === String(R0) ? 'sessThu' : 'sessParatera');
+const routeTitle = (route) => SESSION_TITLE + '（' + routeDef(route).label + '）';
+//: 认领槽时可接受的**全部**标题：新名 + 旧名（LEGACY_TITLES）× 那条线的 label。
+//: 少了它，改名后老槽会话认不回来 ⇒ 插件会**新建一个**（2026-09-25 实测踩过：多出 session-94b0）。
+const routeTitles = (route) => [SESSION_TITLE].concat(typeof LEGACY_TITLES !== 'undefined' ? LEGACY_TITLES : [])
+  .map(function (b) { return b + '（' + routeDef(route).label + '）' });
+//: 上下文阈值：每条线自己的 ctxRatio（配置）→ 否则全局 ctxRatio → 否则 0.7。
+const ctxRatioOf = (route) => (String(route) === String(R0)
+  ? (Number(S.ctxRatioThu) || Number(routeDef(route).ctxRatio) || 0.7)
+  : (Number(routeDef(route).ctxRatio) || Number(S.ctxRatio) || 0.7));
+
+const S = {
+  auto: false, autoTime: '23:00', busy: false, lastCollectAt: 0, lastCount: 0,
+  // 「获取」/「自动」两个按钮的状态（2026-09-13 接线）：
+  //   busy 由"轮询 turn/end 计数"判定（动态插件的 ctx.on 订阅不到宿主事件，见 DEV_NOTES）
+  //   collectDay / autoFiredDay 用 CST 的 YYYY-MM-DD 做"每天只跑一次"去重
+  panelMtime: null, panelCache: null,
+  busySince: 0, busyBase: null, busyFor: '', busySawOpen: false, lastDoneAt: 0, collectDay: '', autoFiredDay: '',
+  // autoWhy：**最近一次自动 tick 为什么没跑**（2026-09-21 加，见 A19）。它只在内存里、每 30 秒重写一次，
+  //   由 `/state` 回显 —— 用户问「启用了自动今天却没有自动」时必须能一眼看出卡在哪一条判据上。
+  autoWhy: '', autoFiredAt: 0,
+  // 「用默认应用打开」（A20）最近一次的结果 —— 只在内存里，供 `/state` 自证
+  lastOpenAt: 0, lastOpenPath: '', lastOpenOk: null, lastOpenHow: '',
+  // A22：主 agent 未回答的提问（`/state.pendingAsk`，面板会显示）；A21：未交付轮的补跑计数
+  pendingAsk: null, resumeCount: 0,
+  // 异常退出自动续跑（2026-09-17 晚）：autoRetry 是总开关，retryCount 是本轮已续跑次数（跑完归零）
+  autoRetry: true, retryCount: 0, lastRetryAt: 0,
+  sessionId: '', note: '骨架版：真实采集待接入', seeded: false,
+  items: DEMO_ITEMS.slice(),
+  lastError: '', lastRouteError: '', lastSaveOk: true, renamedAs: '',
+  mainSessionId: '',
+  // 按会话记"已经发过初始化说明"（S.seeded 是全局布尔，会话一失效就被置回 false，
+  // 于是新认领的旧会话会被再灌一遍 wakeText —— 用户报"每点一次就多发一次提示词"）
+  seededFor: '',
+  // 待发引用：{ id, no, text } | null。**只在内存里**（一次性令牌，不落盘）：
+  // 重启后不该把上一轮的引用再注入一次。
+  quote: null,
+  // 【2026-09-15 晚新增】上下文阈值**自动刷新会话** —— 回合结束后若上下文用量超过阈值就自动 rotate，
+  // 免得主 agent 上下文爆掉后被强制打断（用户 2026-09-15 晚实际发生过一次，那一轮被中途掐掉）。
+  // 判据**全部来自会话事件**，不拍脑袋定绝对值：
+  //   · 真实窗口 `contextWindow`：来自 `request/context` 事件（DSH 的 SessionEventMap 里就有这个类型）
+  //   · 当前用量：取**最新一条** `assistant/message` 的 `usage.totalTokens`
+  //     ⚠ **不能用 inputTokens+outputTokens** —— 缓存命中的上下文不计入 inputTokens（实测差 800 倍）
+  //   · 阈值 = `ctxWindow × ctxRatio`；事件里拿不到窗口时退回绝对阈值 `ctxFallback`
+  // 三道刹车：**有 open turn 不刷**（正在干活别打断）· 同一轮只刷一次 · 冷却期 `ctxCooldownMs`
+  // 实测标定（2026-09-15 晚）：主 agent 走一条 1M 窗口的线路时，事件里 contextWindow=1000000；
+  //   被强制停止那次会话最后一条 totalTokens=797100（**79.7%**，17 个 turn / 2177 个事件）→ 所以 0.7 阈能拦住它。
+  ctxAuto: true, ctxRatio: 0.7, ctxFallback: 200000, ctxCooldownMs: 600000,
+  ctxTokens: 0, ctxWindow: 0, ctxLimit: 0, ctxPct: 0,
+  ctxChecks: 0, ctxSkips: 0, ctxRotations: 0, ctxLastRotateAt: 0, ctxLastRotateTurn: -1,
+  // A23（2026-09-25）：**轮换的留痕**（为什么轮换、归档了谁、有没有报错、逐条步骤）——
+  //   旧版这些只作为返回值存在，定时轮换是后台路径、返回值被丢掉 ⇒ 事后查不出失败原因。
+  ctxLastRotateWhy: '', ctxLastRotateOk: null, ctxLastRotateArchived: '', ctxLastRotateErr: '', ctxLastRotateSteps: [],
+  // A23：工作区里**除当前之外**的同标题主 agent（多出来的那些）。面板会显示出来并允许归档。
+  extraMains: [], extraMainsAt: 0,
+  // 空闲路径的节流：`sc.inspect` 会把整个会话事件读回来（实测爆掉那次 2177 个事件），
+  // 每 30 秒无条件探一次太浪费 → 空闲时最多每 5 分钟探一次；**回合结束那次不受节流**（那才是关键时刻）
+  ctxIdleIntervalMs: 300000, ctxLastProbeAt: 0,
+  ctxChecking: false,   // 只在内存：防两个 tick 并发抢着 rotate
+
+  // ---- 双会话（2026-09-17 用户定案：「开一个 THU 的会话，开一个 paratera 的会话，按需切换使用」）----
+  //   为什么不走"会话内 selectModel"（我先做过、被否掉）：同一个会话切到 THU 会撞它 200k 的窗口
+  //   （实测该会话已达上下文上限），而且长任务中途换供应商不利于可复现/排错。
+  //   ⇒ 两个会话各自带自己的上下文：`sessThu` 新建、上下文小 ⇒ 200k 完全够；`sessParatera` 就是原来那个长会话。
+  sessThu: '', sessParatera: '', routePick: DEFAULT_ROUTE, routeAt: 0, routeWhy: '',
+  routeProbe: null, routeNeedsConfirm: false,
+  // **网关不通时怎么办**（2026-09-17 用户定案：默认「不跑」）—— **只影响「自动」触发那一轮**：
+  //   'skip'     不通就什么都不做（0 元）
+  //   'pipeline' 自动用付费线路只跑管线阶段（取数 + 本地初提 + 台账；约 ¥0.3–0.7）
+  //   'full'     照常跑全轮（付费，约 ¥1–2）
+  //   ⇒ **不再在会话里弹 question 卡片**：那类卡片只出现在"提问那条会话"的输入框里（后台主 agent 会话看不到），
+  //     而且"问"本身就要先唤醒付费会话。
+  //   ⇒ **手动那条路已经不需要策略了**（2026-09-17 白天）：侧栏「获取」改成下拉，他选哪条线路就现场探哪条
+  //     （`POST /collect {route}` → `triggerRound({probeRoute})`），通了才跑、不通只闪红「获取失败」。
+  gwPolicy: 'skip', gwDownAt: 0, gwDownReason: '', gwRunAt: 0, gwRunMode: '',
+  // **THU 的刷新阈值**（用户 2026-09-17 指定 0.9；**当晚实测后改成 0.7**）：
+  //   DSH 自己的压缩阈值是 **0.8×窗口**（源码 `dsh-compaction-basic` 的 DEFAULT_THRESHOLD_RATIO=.8）
+  //   ⇒ THU 200k 会在 **160k** 就被自动压缩（实测 total=160644 那一刻 compaction/start）。
+  //   原来设 0.9（=180k）**比压缩阈值还高 ⇒ 这个自动刷新永远不会触发**，永远是压缩先发生（死参数）。
+  //   0.7 = 140k < 160k ⇒ 能在**回合结束的干净边界**先换会话，避免"带着 160k 进下一轮又被压"。
+  //   注意：轮换只在**回合结束后**跑（checkCtx 空闲/回合末），所以**回合中途**该压还是会压 —— 那是 DSH 的机制。
+  ctxRatioThu: 0.7,
+};
+
+return {
+  inject: ['webServer', 'connection'],
+  apply(ctx) {
+    try {
+      const ws = ctx.get('webServer'), conn = ctx.get('connection'), fsSvc = ctx.get('fs'), timerSvc = ctx.get('timer');
+      if (!ws || !conn || !fsSvc) throw new Error('缺服务');
+      const reject = (req) => { try { return conn.requestRejection(req) } catch (e) { return 403 } };
+      //: 面板条目上限（A11，2026-09-20 审计 H05）。**恢复与写入必须同一判据**：
+      //   loadState 的恢复截断、`/items` 与 `/items-patch` 的写入拒绝都用它。
+      const ITEMS_MAX = 300;
+      const send = (res, code, obj) => { try { res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(obj)) } catch (e) {} };
+      const noteError = (where, e) => { S.lastError = where + ': ' + String((e && e.message) || e); S.lastSaveOk = false; };
+      const readBody = (req) => new Promise(function (resolve) {
+        let text = '', done = false, offTo = null, dec = null;
+        try { dec = new TextDecoder('utf-8') } catch (e) {}
+        const fin = (v) => { if (done) return; done = true; try { if (offTo) offTo() } catch (e) {}; resolve(v) };
+        if (timerSvc && timerSvc.timeout) { try { offTo = timerSvc.timeout(() => fin({}), 3000) } catch (e) {} }
+        req.on('data', (c) => { try { if (typeof c === 'string') text += c; else if (dec) text += dec.decode(c, { stream: true }) } catch (e) {} });
+        req.on('end', () => { try { if (dec) { try { text += dec.decode() } catch (e) {} } let o = {}; try { o = text ? JSON.parse(text) : {} } catch (e) { o = {} } fin(o) } catch (e) { fin({}) } });
+        req.on('error', () => fin({}));
+      });
+      const race = (p, ms) => Promise.race([Promise.resolve(p).catch(() => null), new Promise((r) => { try { timerSvc.timeout(() => r(null), ms) } catch (e) { r(null) } })]);
+
+      const saveState = async () => {
+        try {
+          const payload = { schema: STATE_SCHEMA, sessionId: S.sessionId, mainSessionId: S.mainSessionId, auto: S.auto, autoTime: S.autoTime, lastCollectAt: S.lastCollectAt, seeded: S.seeded, seededFor: S.seededFor, items: S.items,
+            busy: S.busy, busySince: S.busySince, busyBase: S.busyBase, busyFor: S.busyFor || '', busySawOpen: !!S.busySawOpen, lastDoneAt: S.lastDoneAt, collectDay: S.collectDay, autoFiredDay: S.autoFiredDay,
+            autoRetry: S.autoRetry !== false, retryCount: Number(S.retryCount || 0), lastRetryAt: Number(S.lastRetryAt || 0),
+            // A19：`note`（最近一次动作的人话）与 `autoFiredAt`（上次自动触发时刻）以前**没持久化** ⇒
+            //   重启后 note 退回默认值"骨架版：真实采集待接入"，看起来像"什么都没发生过"。
+            note: String(S.note || ''), autoFiredAt: Number(S.autoFiredAt || 0),
+            ctxAuto: S.ctxAuto, ctxRatio: S.ctxRatio, ctxFallback: S.ctxFallback, ctxCooldownMs: S.ctxCooldownMs,
+            ctxTokens: S.ctxTokens, ctxWindow: S.ctxWindow, ctxLimit: S.ctxLimit, ctxPct: S.ctxPct,
+            ctxChecks: S.ctxChecks, ctxSkips: S.ctxSkips, ctxRotations: S.ctxRotations,
+            ctxLastRotateAt: S.ctxLastRotateAt, ctxLastRotateTurn: S.ctxLastRotateTurn,
+            // A23：轮换留痕 + 多出来的同标题主 agent（都要跨重启活下来，否则"上次为什么没归档"重启后就没了）
+            ctxLastRotateWhy: String(S.ctxLastRotateWhy || ''), ctxLastRotateOk: (S.ctxLastRotateOk === null || S.ctxLastRotateOk === undefined) ? null : !!S.ctxLastRotateOk,
+            ctxLastRotateArchived: String(S.ctxLastRotateArchived || ''), ctxLastRotateErr: String(S.ctxLastRotateErr || ''),
+            ctxLastRotateSteps: Array.isArray(S.ctxLastRotateSteps) ? S.ctxLastRotateSteps.slice(0, 24).map(String) : [],
+            extraMains: Array.isArray(S.extraMains) ? S.extraMains.slice(0, 30) : [], extraMainsAt: Number(S.extraMainsAt || 0),
+            // 双会话（2026-09-17）：**这几行少了，重启后槽就空 ⇒ 又重新 adopt/create 一个会话**（实测踩过）
+            sessThu: S.sessThu || '', sessParatera: S.sessParatera || '',
+            routePick: S.routePick || '', inbox: INBOX_DIR, routes: ROUTES.map(function (r) { return { id: r.id, label: r.label, menuName: r.menuName || '', hint: r.hint || '', 'default': !!r['default'] } }),
+    routeAt: S.routeAt || 0, routeWhy: S.routeWhy || '',
+            ctxRatioThu: (S.ctxRatioThu === undefined ? 0.7 : S.ctxRatioThu),
+            slotsInitAt: S.slotsInitAt || 0, slotsInitVer: S.slotsInitVer || 0,
+            slotsInitSteps: Array.isArray(S.slotsInitSteps) ? S.slotsInitSteps.slice(0, 40) : [],
+            routeNeedsConfirm: !!S.routeNeedsConfirm, routeProbe: S.routeProbe || null,
+            gwPolicy: S.gwPolicy || 'skip', gwDownAt: S.gwDownAt || 0, gwDownReason: S.gwDownReason || '',
+            gwRunAt: S.gwRunAt || 0, gwRunMode: S.gwRunMode || '',
+            // A04（2026-09-20 审计 H06）：**"请求采集"与"采集完成"分开存**。
+            //   旧版在 sc.prompt 之后立刻写 lastCollectAt/collectDay ⇒ 只是"入队成功"就被记成
+            //   "采集到现在"，中断/取数失败/没交付都会留下**再也不会被覆盖的空洞**。
+            //   现在 pendingCollect 记"已请求但还没交付"，只有面板真被回写（取数+交付通过）才提交游标。
+            pendingCollect: S.pendingCollect || null,
+            // A21/A22：未交付轮的补跑计数 + 主 agent 未回答的提问（都要能跨重启活下来，
+            //   否则"昨晚它问了什么"重启后就查不到了）
+            resumeCount: Number(S.resumeCount || 0),
+            pendingAsk: S.pendingAsk
+              ? { callId: String(S.pendingAsk.callId || ''), at: Number(S.pendingAsk.at || 0),
+                  stale: !!S.pendingAsk.stale,
+                  questions: Array.isArray(S.pendingAsk.questions) ? S.pendingAsk.questions.slice(0, 4) : [] }
+              : null };
+          const text = JSON.stringify(payload, null, 2);
+          // A18：写前把**上一份有效内容**另存 `.bak`。fs 服务没有 rename/remove，
+          //   所以这里只能"读+写"复制（**不搬移、不删除**）。只在上一份能解析时才覆盖 .bak ——
+          //   否则会把好备份换成坏内容。
+          let prev = '';
+          try { prev = await fsSvc.readText(await fsSvc.resolve(STATE_FILE)) } catch (e) {}
+          if (prev) {
+            try { JSON.parse(prev); await fsSvc.writeText(await fsSvc.resolve(STATE_FILE + '.bak'), prev) } catch (e) {}
+          }
+          await fsSvc.writeText(await fsSvc.resolve(STATE_FILE), text);
+          S.lastSaveOk = true; S.lastError = '';
+          return 'saved';
+        } catch (e) { noteError('saveState', e); return 'save-fail' }
+      };
+      const loadState = async () => {
+        // A18：先取原始文本，**把"不存在"与"损坏"分开**（旧版一个 try 包到底，
+        //   解析失败就当没有 → 面板静默变空，还看不出是坏了）。
+        let raw = '';
+        let migrated = false;
+        // 旧位置候选（本插件改过名，见 STATE_OLD 的注释）：下面两段迁移都用它，故提到外面。
+        // 注意：探针切出来的片段**不给 STATE_OLD 传参** ⇒ 每处引用都必须先 typeof 再取，
+        // 否则 Array.isArray(STATE_OLD) 会先抛 ReferenceError（2026-09-25 实测把 23 条探针全打成 0）。
+        let olds = [];
+        if (typeof STATE_OLD === 'string' && STATE_OLD) olds = [STATE_OLD];
+        else if (typeof STATE_OLD !== 'undefined' && Array.isArray(STATE_OLD)) olds = STATE_OLD;
+        try { raw = await fsSvc.readText(await fsSvc.resolve(STATE_FILE)) } catch (e) { raw = '' }
+        if (!raw) {
+          // 一次性迁移：新路径没有、某个旧位置有 ⇒ 读旧的，并在下面**立刻落盘到新路径**（旧文件不删）。
+          for (const oldP of olds) {
+            if (!oldP) continue;
+            try {
+              const o = await fsSvc.readText(await fsSvc.resolve(oldP));
+              if (o) { raw = o; migrated = true; S.note = '状态已从旧位置迁到 ' + STATE_FILE + '（来源 ' + oldP + '）'; break }
+            } catch (e) {}
+          }
+        }
+        if (!raw) return 'none';                           // 确实没有：保持默认值（不是损坏）；返回 'none' 与旧行为一致（调用方只把它拼进诊断串）
+        let j = null;
+        try { j = JSON.parse(raw) } catch (e) {
+          // 损坏隔离（**不删任何文件**）：坏件另存为 .corrupt-<ts>，再尝试从 .bak 恢复。
+          const ts = String(Date.now());
+          try { await fsSvc.writeText(await fsSvc.resolve(STATE_FILE + '.corrupt-' + ts), raw) } catch (e2) {}
+          let bak = '';
+          try { bak = await fsSvc.readText(await fsSvc.resolve(STATE_FILE + '.bak')) } catch (e2) {}
+          let jb = null;
+          try { jb = bak ? JSON.parse(bak) : null } catch (e2) { jb = null }
+          if (jb) { j = jb; S.note = 'state.json 解析失败，已从 .bak 恢复（坏件另存 state.json.corrupt-' + ts + '）' }
+          else { S.note = 'state.json 解析失败且 .bak 也不可用（坏件另存 state.json.corrupt-' + ts + '），本轮按默认值启动'; S.lastError = 'loadState: corrupt state.json'; return 'none' }
+        }
+        // 兜底迁移（2026-09-25 实测）：新位置**已经有文件**、但那份**从没采集过**
+        //   （既无 collectDay 也无 lastCollectAt），而某个旧位置有采集记录 ⇒ 以旧的为准。
+        //   为什么会出现这种局面：把空壳让位之后，**当时还活着的旧实例又把它写了回去**，
+        //   于是重启时 STATE_FILE 非空、上面那段整段被跳过 —— 面板条目 17 就只剩 6 了。
+        //   判据故意取到最窄：两条都没有才算「从没采集过」，正常新装用户不受影响（旧位置本来就不存在）。
+        if (!migrated && (!j || (!j.collectDay && !j.lastCollectAt))) {
+          for (const oldP of olds) {
+            if (!oldP) continue;
+            try {
+              const o = await fsSvc.readText(await fsSvc.resolve(oldP));
+              if (!o) continue;
+              const oj = JSON.parse(o);
+              if (oj && (oj.collectDay || oj.lastCollectAt)) {
+                raw = o; j = oj; migrated = true;
+                S.note = '新位置那份从没采集过，已按旧位置的记录恢复（来源 ' + oldP + '）';
+                break;
+              }
+            } catch (e) {}
+          }
+        }
+        try {
+          if (j && j.sessionId) S.sessionId = String(j.sessionId);
+          if (j && j.mainSessionId) S.mainSessionId = String(j.mainSessionId);
+          if (j && typeof j.auto === 'boolean') S.auto = j.auto;
+          if (j && typeof j.autoTime === 'string') S.autoTime = j.autoTime;
+          if (j && j.lastCollectAt) S.lastCollectAt = Number(j.lastCollectAt) || 0;
+          // 采集轮状态（重启后：busy 一并恢复，但下一次 tick 会用 inspect 复核，不会永远卡住）
+          if (j && typeof j.busy === 'boolean') S.busy = j.busy;
+          if (j && j.busySince) S.busySince = Number(j.busySince) || 0;
+          if (j && j.busyBase !== undefined) S.busyBase = (j.busyBase === null ? null : Number(j.busyBase));
+          // 2026-09-17 晚加：busy 收尾要认"这一轮发进了哪个会话"（中途换会话也能收尾，见 checkBusy）
+          if (j && typeof j.busyFor === 'string') S.busyFor = j.busyFor;
+          if (j && typeof j.busySawOpen === 'boolean') S.busySawOpen = j.busySawOpen;
+          // 异常退出自动续跑（2026-09-17 晚）：开关与计数也要持久化，否则重启就丢
+          if (j && typeof j.autoRetry === 'boolean') S.autoRetry = j.autoRetry;
+          if (j && Number.isFinite(Number(j.retryCount))) S.retryCount = Number(j.retryCount);
+          if (j && Number.isFinite(Number(j.lastRetryAt))) S.lastRetryAt = Number(j.lastRetryAt);
+          if (j && j.lastDoneAt) S.lastDoneAt = Number(j.lastDoneAt) || 0;
+          // 迁移**只认"字段不存在"**（老状态才补），**空串是有效值**（＝"今天还没采集过"，由 {at} 拨指针时显式清空）。
+          // 2026-09-13 踩坑：原来写成"空串也当缺字段 → 记成今天"，于是拨完指针后任何一次 loadState（/ss、/chat…）
+          //   都会把标记填回今天 → 「自动」到点也不触发（用户报"打开了自动，没有效果"）。
+          if (j && typeof j.collectDay === 'string') S.collectDay = j.collectDay;
+          else S.collectDay = new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
+          if (j && typeof j.autoFiredDay === 'string') S.autoFiredDay = j.autoFiredDay;
+          // A19：`note` 与 `autoFiredAt` 以前不落盘 ⇒ 重启后看不出"上一轮到底做了什么"
+          if (j && typeof j.note === 'string') S.note = j.note;
+          if (j && Number.isFinite(Number(j.autoFiredAt))) S.autoFiredAt = Number(j.autoFiredAt);
+          if (j && typeof j.seeded === 'boolean') S.seeded = j.seeded;
+          if (j && typeof j.seededFor === 'string') S.seededFor = j.seededFor;
+          // 上下文自动刷新的配置与计数（只认合法值，坏值忽略而不是清 0）
+          if (j && typeof j.ctxAuto === 'boolean') S.ctxAuto = j.ctxAuto;
+          if (j && Number(j.ctxRatio) > 0 && Number(j.ctxRatio) <= 1) S.ctxRatio = Number(j.ctxRatio);
+          if (j && Number(j.ctxFallback) > 0) S.ctxFallback = Number(j.ctxFallback);
+          if (j && Number(j.ctxCooldownMs) >= 0) S.ctxCooldownMs = Number(j.ctxCooldownMs);
+          ['ctxTokens', 'ctxWindow', 'ctxLimit', 'ctxPct', 'ctxChecks', 'ctxSkips', 'ctxRotations',
+           'ctxLastRotateAt', 'ctxLastRotateTurn'].forEach((k) => {
+            if (j && j[k] !== undefined && Number.isFinite(Number(j[k]))) S[k] = Number(j[k]);
+          });
+          // A23：轮换留痕与"多出来的同名主 agent"也要跨重启
+          if (j && typeof j.ctxLastRotateWhy === 'string') S.ctxLastRotateWhy = j.ctxLastRotateWhy;
+          if (j && (j.ctxLastRotateOk === null || typeof j.ctxLastRotateOk === 'boolean')) S.ctxLastRotateOk = j.ctxLastRotateOk;
+          if (j && typeof j.ctxLastRotateArchived === 'string') S.ctxLastRotateArchived = j.ctxLastRotateArchived;
+          if (j && typeof j.ctxLastRotateErr === 'string') S.ctxLastRotateErr = j.ctxLastRotateErr;
+          if (j && Array.isArray(j.ctxLastRotateSteps)) S.ctxLastRotateSteps = j.ctxLastRotateSteps.slice(0, 24).map(String);
+          if (j && Array.isArray(j.extraMains)) S.extraMains = j.extraMains.slice(0, 30);
+          if (j && Number.isFinite(Number(j.extraMainsAt))) S.extraMainsAt = Number(j.extraMainsAt);
+          // A07（2026-09-20 审计 H02）：**空数组也是有效状态**。
+          //   旧版写成 `j.items.length` 为真才恢复 ⇒ 磁盘上是 `[]` 时被整段忽略，
+          //   内存里还留着 demo 条目（"空列表无法恢复"）。现在只看"是不是数组"。
+          if (j && Array.isArray(j.items)) S.items = j.items.slice(0, (typeof ITEMS_MAX === 'number') ? ITEMS_MAX : 300);
+          // A04：待交付的采集窗口（重启后仍然知道"有一轮请求过但没交付"）
+          if (j && j.pendingCollect && typeof j.pendingCollect === 'object' && j.pendingCollect.day) {
+            S.pendingCollect = { day: String(j.pendingCollect.day), at: Number(j.pendingCollect.at) || 0,
+                                 sessionId: String(j.pendingCollect.sessionId || ''), reason: String(j.pendingCollect.reason || ''),
+                                 mode: String(j.pendingCollect.mode || '') };
+          }
+          // A21/A22：补跑计数与"未回答的提问"也要跨重启（否则昨晚它问了什么，重启后就查不到）
+          if (j && Number.isFinite(Number(j.resumeCount))) S.resumeCount = Number(j.resumeCount);
+          if (j && j.pendingAsk && typeof j.pendingAsk === 'object' && j.pendingAsk.callId) {
+            S.pendingAsk = { callId: String(j.pendingAsk.callId), at: Number(j.pendingAsk.at) || 0,
+                             stale: !!j.pendingAsk.stale,
+                             questions: Array.isArray(j.pendingAsk.questions) ? j.pendingAsk.questions.slice(0, 4) : [] };
+          }
+          // ---- 双会话（2026-09-17）----
+          // **必须在 saveState 的 payload 里也列上**（这个白名单是显式的：漏一个字段它就只在内存里活，
+          //   重启后变回默认值 → 槽空 ⇒ 又去 adopt/create 一个新会话。2026-09-17 实测踩到：
+          //   因为 sessThu/sessParatera 没持久化，**每次重启都重造一个 THU 会话**）。
+          if (j && typeof j.sessThu === 'string') S.sessThu = j.sessThu;
+          if (j && typeof j.sessParatera === 'string') S.sessParatera = j.sessParatera;
+          if (j && typeof j.routePick === 'string' && ((typeof ROUTES !== 'undefined' ? routeIds() : ['thu', 'paratera']).indexOf(j.routePick) >= 0)) S.routePick = j.routePick;
+          if (j && j.routeAt) S.routeAt = Number(j.routeAt) || 0;
+          if (j && typeof j.routeWhy === 'string') S.routeWhy = j.routeWhy;
+          // ⚠ THU 的刷新阈值**必须低于 DSH 自己的压缩阈值 0.8**，否则它永远不会先触发（＝死参数）。
+          //   2026-09-17 晚实测：当时按用户要求设 0.9，而 0.9 > 0.8 ⇒ 永远是 DSH 压缩先发生
+          //   （实测 total=162632 那一轮被压掉 66k）。这里把**盘上的旧值夹到 0.75**，免得"代码改了、盘上还是 0.9"。
+          if (j && Number(j.ctxRatioThu) > 0 && Number(j.ctxRatioThu) <= 1) S.ctxRatioThu = Math.min(Number(j.ctxRatioThu), 0.75);
+          if (j && j.slotsInitAt) S.slotsInitAt = Number(j.slotsInitAt) || 0;
+          if (j && j.slotsInitVer !== undefined) S.slotsInitVer = Number(j.slotsInitVer) || 0;
+          if (j && Array.isArray(j.slotsInitSteps)) S.slotsInitSteps = j.slotsInitSteps.slice(0, 40).map(String);
+          if (j && typeof j.routeNeedsConfirm === 'boolean') S.routeNeedsConfirm = j.routeNeedsConfirm;
+          // 网关不通时的策略（2026-09-17）——**同样必须进白名单**，否则重启就丢
+          if (j && ['skip', 'pipeline', 'full'].indexOf(String(j.gwPolicy)) >= 0) S.gwPolicy = String(j.gwPolicy);
+          if (j && j.gwDownAt) S.gwDownAt = Number(j.gwDownAt) || 0;
+          if (j && typeof j.gwDownReason === 'string') S.gwDownReason = j.gwDownReason;
+          if (j && j.gwRunAt) S.gwRunAt = Number(j.gwRunAt) || 0;
+          if (j && typeof j.gwRunMode === 'string') S.gwRunMode = j.gwRunMode;
+          if (j && j.routeProbe && typeof j.routeProbe === 'object') {
+            S.routeProbe = { at: Number(j.routeProbe.at) || 0, ok: !!j.routeProbe.ok, status: Number(j.routeProbe.status) || 0,
+                             ms: Number(j.routeProbe.ms) || 0, err: String(j.routeProbe.err || ''), route: String(j.routeProbe.route || '') };
+          }
+          // A18：迁移过来就**立刻写到新路径**，别只读不写（否则每次启动都要再读一次旧文件）。
+          // `typeof` 兜底：审计探针单独 exec 这段时作用域里没有 saveState。
+          if (migrated && typeof saveState === 'function') { try { await saveState() } catch (e) {} }
+          return S.sessionId ? 'restored' : 'empty';
+        } catch (e) { return 'none' }
+      };
+
+      const readArchived = async (wc, steps) => {
+        try {
+          if (!wc || !wc.follow) return null;
+          const it = wc.follow(FAKE_SIGNAL); if (!it || !it.next) return null;
+          const first = await race(it.next(), 1500); try { if (it.return) race(it.return(), 500) } catch (e) {}
+          const f = first && first.value;
+          if (f && f.type === 'baseline' && f.value && f.value.archivedSessionIds) { steps.push('arch:ok'); return f.value.archivedSessionIds.map(String) }
+          return null;
+        } catch (e) { return null }
+      };
+
+      const sessionSummary = async (sc, id) => {
+        try {
+          const v = await race(sc.list({}, FAKE_SIGNAL), 2500);
+          const items = (v && v.items) || [];
+          for (let i = 0; i < items.length; i++) { if (String(items[i].sessionId) === String(id)) return items[i] }
+          return null;
+        } catch (e) { return undefined }
+      };
+      // 建会话统一入口（2026-09-18）：带上聊天摘要专用 preset（压缩调优版）。
+      //   为什么要带：**压缩策略是建会话时定死的**（`SessionHeader.agentPreset` 持久化 +
+      //     `assertPresetUnchanged` 事后不许改），用默认 preset 建的会话永远吃 `retainRatio` 0.16
+      //     （THU 200k ⇒ 只逐字保留 32k，压一次就丢细节）。
+      //   降级保护：preset 服务不可用/查不到/建会话报错 ⇒ **退回不带 preset 再建一次**。
+      //     调优是可选件，采集线绝不能因为它整个挂掉；降级只记步骤、不进 `S.lastError`（免得报假警）。
+const AGENT_PRESET = (typeof CF.agentPreset === 'string') ? CF.agentPreset : '';
+      let presetOk = null;   // null=还没探过；探到一次就缓存，避免每建一次会话都问一遍
+      const presetUsable = async () => {
+        if (presetOk !== null) return presetOk;
+        try {
+          const ap = ctx.get('agentPresets');
+          if (!ap || !ap.resolve) { presetOk = false; return presetOk }
+          const r = await ap.resolve(AGENT_PRESET);
+          presetOk = !!(r && String(r.id) === AGENT_PRESET);
+        } catch (e) { presetOk = false }
+        return presetOk;
+      };
+      const createSession = async (sc, base, steps) => {
+        const tag = (steps && steps.push) ? (s) => steps.push(s) : () => {};
+        if (await presetUsable()) {
+          try {
+            const made = await sc.create(Object.assign({}, base, { agentPreset: AGENT_PRESET }));
+            tag('preset:' + AGENT_PRESET);
+            return made;
+          } catch (e) {
+            presetOk = false;   // 记忆化关掉，后面所有建会话都走降级分支
+            tag('preset-fallback:' + String((e && e.message) || e).slice(0, 40));
+          }
+        } else tag('preset:none');
+        return await sc.create(base);
+      };
+      const checkUsable = async (sc, id, steps, wsIds, arch) => {
+        // **首选工作区成员表**（`wc.create().workspace.sessionIds`，不分页、最权威）。
+        // 2026-09-17 晚实测出锅：这里原来只看 `sc.list()`，而它是**分页**的 ⇒ 槽会话不在第一页就被判
+        //   `stale:list-missing` ⇒ 判死 ⇒ 认领失败 ⇒ **又新建一个主 agent 并灌 WAKE_TEXT**（两个主 agent 同时跑）。
+        //   这与 `liveOk` 那次是同一个坑 —— 判活一律以成员表为准，`sc.list()` 只能当兜底。
+        try {
+          const list = (wsIds || []).map(String);
+          const dead = (arch || []).map(String);
+          if (list.length && list.indexOf(String(id)) >= 0 && dead.indexOf(String(id)) < 0) {
+            steps.push('alive:ws-member'); return { alive: true, needWake: false };
+          }
+        } catch (e) {}
+        const sum = await sessionSummary(sc, id);
+        if (sum === undefined) { steps.push('alive:list-unavailable'); return { alive: true, needWake: false } }
+        if (sum === null) { steps.push('stale:list-missing'); return { alive: false, needWake: false } }
+        if (sum.blank === true) { steps.push('alive:blank-needs-wake'); return { alive: true, needWake: true } }
+        steps.push('alive:ok');
+        return { alive: true, needWake: false };
+      };
+
+      //: DSH 家的位置（会话投影缓存在这里）。默认 $DSH_HOME，没设就 %USERPROFILE%\.dsh —— 不写死用户名。
+      const DSH_HOME = (typeof CF.dshHome === 'string' && CF.dshHome) ? CF.dshHome
+        : (ENV.DSH_HOME ? ENV.DSH_HOME : ((ENV.USERPROFILE || 'C:') + '\\.dsh'));
+      const PROJ_DIR = DSH_HOME + '\\storages\\session_projcache\\sessions\\';
+      const sessionMeta = async (fs2, sid) => {
+        try {
+          const txt = await fs2.readText(await fs2.resolve(PROJ_DIR + sid + '.json'));
+          const j = JSON.parse(txt);
+          const rec = (j && j.record) || {};
+          const ident = rec.identity || {};
+          let title = '';
+          try { title = String(rec.rows.title.val || '') } catch (e) {}
+          let blank = false;
+          try { blank = rec.rows.sessionListMetadata.val.blank === true } catch (e) {}
+          return { createdAt: Number(ident.createdAt) || 0, title: title, blank: blank };
+        } catch (e) { return null }
+      };
+
+      // 活成员闸门（2026-09-13 加，用户报"为啥出现两个主 agent"）：
+      // 上面 adoptExistingMain 的第一条判据（锚点）和"活的成员表"是两套口径，
+      // 而活成员表才是侧栏真正渲染的东西。既然某个活成员已经是同名主 agent，就绝不该再 create。
+      // ⚠ 必须同时排除"已归档"的：成员表里**会**保留已归档的会话（实测某个 id 既在 members 又在
+      // archivedSessionIds 里）。上一版只查 members，于是把一个已归档的会话又认领回来，
+      // 造成"认领 → 下轮判 stale → 再认领"的死循环（/ss 返回的 sessionId 一直是那个已归档的）。
+      // 主 agent 的标题现在有**三种形态**（2026-09-17 晚）：通用名 + 两条槽的带后缀名。
+      // ⚠ 这里只认通用名会出大事（当晚实测出锅）：槽标题改成带后缀后，`ensureSession` 就**找不到"主 agent"**了
+      //   ⇒ 判定"没有活的主 agent" ⇒ **又新建一个并灌 WAKE_TEXT** ⇒ 两个主 agent 同时跑。
+      //   所以凡是要判"这条会话是不是主 agent"，一律用这个函数，不要直接和 SESSION_TITLE 比。
+      const isMainTitle = (t) => {
+        const s = String(t || '');
+        const bases = [SESSION_TITLE].concat(typeof LEGACY_TITLES !== 'undefined' ? LEGACY_TITLES : []);
+        return bases.some(function (b) {
+          return s === b || (typeof ROUTES !== 'undefined' ? ROUTES : []).some(function (r) { return s === b + '（' + r.label + '）' });
+        });
+      };
+
+      const adoptLiveByTitle = async (sc, wsIds, arch, steps) => {
+        const list = (wsIds || []).map(String);
+        if (!list.length) return '';
+        const dead = (arch || []).map(String);
+        const cands = [];
+        for (let i = 0; i < list.length && i < 60; i++) {
+          const id = list[i];
+          if (!id.startsWith('session-')) continue;
+          if (dead.indexOf(id) >= 0) continue;              // 已归档：绝不再认领
+          const meta = await sessionMeta(ctx.get('fs'), id);
+          if (meta && isMainTitle(meta.title)) cands.push({ id: id, createdAt: meta.createdAt || 0 });
+        }
+        if (!cands.length) return '';
+        cands.sort((a, b) => a.createdAt - b.createdAt);
+        steps.push('adopt:live-title:' + cands[0].id.slice(0, 12));
+        return cands[0].id;
+      };
+
+      // A23（2026-09-25 用户问"为什么多了一堆主agent"）：**把"多出来的同标题主 agent"扫出来给面板看**。
+      //   实测：用户问这话时插件**自己也不知道**有这事 —— 它只认 `S.sessionId` 那一条，其余同标题的
+      //   活会话（当时 3 条）在插件眼里不存在，只能靠我翻 `~/.dsh/storages/workspace.json` 反推。
+      //   现在每 5 分钟扫一次工作区成员，除当前会话与两个槽之外的、标题是主 agent 的，列进
+      //   `/state.extraMains`；面板显示并可一键归档（`POST /chat-feed/api/archive`）。
+      const scanExtraMains = async () => {
+        try {
+          const wc = ctx.get('workspaceController');
+          if (!wc || !wc.create) return;
+          const made = await race(wc.create({ path: AGENT_CWD }), 4000);
+          const ids = ((made && made.workspace && made.workspace.sessionIds) || []).map(String);
+          const arch = await readArchived(wc, []);
+          const dead = (arch || []).map(String);
+          const cur = String(S.sessionId || ''), thu = String(S.sessThu || ''), par = String(S.sessParatera || '');
+          const extra = [];
+          for (let i = 0; i < ids.length && i < 60; i++) {
+            const id = ids[i];
+            if (!id.startsWith('session-')) continue;
+            if (dead.indexOf(id) >= 0) continue;
+            if (id === cur || id === thu || id === par) continue;
+            const meta = await sessionMeta(ctx.get('fs'), id);
+            if (meta && isMainTitle(meta.title)) {
+              extra.push({ id: id, title: String(meta.title || ''), createdAt: Number(meta.createdAt) || 0 });
+            }
+          }
+          extra.sort((a, b) => a.createdAt - b.createdAt);
+          const before = JSON.stringify(S.extraMains || []);
+          S.extraMains = extra; S.extraMainsAt = Date.now();
+          if (JSON.stringify(extra) !== before) {
+            // **只在 ≥2 条时才写 note / 提示**（用户 2026-09-25 定）：留 1 条当备份是正常选择，
+            //   不该让面板一直挂着一张"有 1 条多余的"卡片（面板那边用同一门槛）。
+            if (extra.length >= 2) S.note = '工作区里有 ' + extra.length + ' 条多余的同标题主 agent（面板可一键归档）';
+            await saveState();
+          }
+        } catch (e) { /* 扫描失败不致命：它只是"看得见"的问题 */ }
+      };
+
+      const adoptExistingMain = async (sc, wc, wsIds, arch, steps) => {        const alive = [];
+        const consider = async (tag, id) => {
+          if (!id || !String(id).startsWith('session-')) return;
+          if (arch && arch.indexOf(String(id)) >= 0) { steps.push('adopt:' + tag + ':archived'); return }
+          const sum = await sessionSummary(sc, id);
+          if (!sum || !sum.sessionId) { steps.push('adopt:' + tag + ':missing'); return }
+          const meta = await sessionMeta(ctx.get('fs'), String(id));
+          alive.push({ tag: tag, id: String(id), meta: meta, createdAt: (meta && meta.createdAt) || 0, title: (meta && meta.title) || '' });
+        };
+        if (S.mainSessionId) await consider('anchor', String(S.mainSessionId));
+        if (S.sessionId && String(S.sessionId) !== String(S.mainSessionId)) await consider('from-state', String(S.sessionId));
+        if (!alive.length && wsIds && wsIds.length) {
+          for (let i = 0; i < wsIds.length && i < 40; i++) await consider('ws', String(wsIds[i]));
+        }
+        const titled = alive.filter((x) => isMainTitle(x.title)).sort((a, b) => a.createdAt - b.createdAt);
+        if (titled.length) { steps.push('adopt:' + titled[0].tag + ':' + titled[0].id.slice(0, 12)); return titled[0].id }
+        const any = alive.slice().sort((a, b) => a.createdAt - b.createdAt);
+        if (any.length) { steps.push('adopt:earliest:' + any[0].id.slice(0, 12)); return any[0].id }
+        return '';
+      };
+
+      // ⚠ 并发保护（2026-09-13 加，用户问"都归档了你不会自己新建一个吗"）：
+      // 认领/新建这套逻辑在"工作区里一个活会话都没有"时**必须新建**（这次就是全部归档 → 它自己新建了
+      // session-28a5）。但 /ss 会被好几个入口同时打到（UI 的 openPanel + boot、/chat、/tell），
+      // 而"没有活会话"这个状态在两次 create 之间是**不变的** → 两个并发 /ss 会各建一个主 agent，
+      // 就是历史那个"反复新建"的根因。这里用一个进程内的 mutex：同一时刻只跑一次 ensureSession，
+      // 重复调用直接复用同一个 promise。
+      let ensureInFlight = null;
+      const ensureSession = async (wantSeed) => {
+        if (ensureInFlight) return ensureInFlight;
+        const run = (async () => {
+          const sc = ctx.get('sessionController'), wc = ctx.get('workspaceController');
+          if (!sc || !sc.create) return { ok: false, error: 'sessionController 不可用' };
+          const steps = ['load:' + (await loadState())];
+        const loadedId = String(S.sessionId || '');   // 用于最后判断"会话 id 是否变了"，变了要落盘
+        let wsId = '', wsIds = null, wsTitle = '';
+        if (wc && wc.create) {
+          try {
+            const made = await race(wc.create({ path: AGENT_CWD }), 4000);
+            const w = made && made.workspace;
+            if (w && w.workspaceId) {
+              wsId = String(w.workspaceId); wsIds = (w.sessionIds || []).map(String); wsTitle = String(w.title || '');
+              steps.push(made.created ? 'ws:created' : 'ws:found');
+              try {
+                if (wsTitle === WORKSPACE_TITLE) steps.push('ws:title-ok');
+                // 这个工作区是**按 AGENT_CWD 的路径**查出来的 ⇒ 它就是我们自己的，标题也归我们管；
+                // 别人的工作区根本走不到这里。2026-09-25 改名后老工作区还叫旧名，只改「新建」的
+                // 会让侧栏永远挂着一个旧名 —— 所以标题不一致就改回来。
+                else if (wc.rename) { await wc.rename({ workspaceId: w.workspaceId, title: WORKSPACE_TITLE }); steps.push('ws:renamed:' + String(wsTitle).slice(0, 12) + '->' + WORKSPACE_TITLE) }
+                else steps.push('ws:title-kept:' + String(wsTitle).slice(0, 16));
+              } catch (e) { steps.push('ws:rename-err') }
+            }
+          } catch (e) { steps.push('ws:err') }
+        }
+        if (S.sessionId) {
+          const id = String(S.sessionId);
+          const arch = await readArchived(wc, steps);
+          if (arch && arch.indexOf(id) >= 0) { steps.push('stale:archived'); S.sessionId = '' }
+          else if (wsIds && wsIds.indexOf(id) < 0) {
+            // 成员表可能滞后（刚新建/刚切工作区）→ 先用"活的会话列表"复核一次再决定是否清空。
+            const sum2 = await sessionSummary(sc, id);
+            if (sum2 && sum2.sessionId && sum2.blank !== true) steps.push('wsids:lag-but-alive');
+            else { steps.push('stale:not-in-workspace'); S.sessionId = '' }
+          }
+          if (!S.sessionId) S.seeded = false;
+        }
+        let created = false, needWake = false;
+        if (!S.sessionId) {
+          const arch1 = await readArchived(wc, [])
+          const adopted = await adoptExistingMain(sc, wc, wsIds, arch1, steps)
+          if (adopted) { S.sessionId = adopted; if (!S.mainSessionId) S.mainSessionId = adopted }
+          // 活成员闸门（见 adoptLiveByTitle 的注释）：archivedSessionIds 可能过时，
+          // 但"工作区里的活成员 + 标题"不会。它命中就认领，绝不 create。
+          if (!S.sessionId) {
+            const live = await adoptLiveByTitle(sc, wsIds, arch1, steps)
+            if (live) { S.sessionId = live; if (!S.mainSessionId) S.mainSessionId = live }
+          }
+        }
+        if (!S.sessionId) {
+          try {
+            const made = await createSession(sc, wsId ? { workspaceId: wsId } : { cwd: AGENT_CWD }, steps);
+            const id = made && made.sessionId ? String(made.sessionId) : '';
+            if (!id) return { ok: false, error: 'create 未返回 id', steps };
+            S.sessionId = id; created = true; needWake = true; retargetQuote([loadedId], id, steps);
+            const archA = await readArchived(wc, []);
+            // 锚点为空或指着已归档会话时跟着新会话走（否则 mainSessionId 会停在死会话上）
+            if (!S.mainSessionId || (archA && archA.indexOf(String(S.mainSessionId)) >= 0)) { S.mainSessionId = id; steps.push('anchor-set:' + id.slice(0, 12)) }
+            steps.push('created:' + id.slice(0, 12)); steps.push('persist:' + (await saveState()));
+          } catch (e) { return { ok: false, error: 'create 失败：' + String((e && e.message) || e), steps } }
+        } else {
+          // 归档表要在体检**之前**取（checkUsable 要用它排除"成员表里含已归档会话"这个已知情形）
+          const arch2 = await readArchived(wc, [])
+          const chk = await checkUsable(sc, S.sessionId, steps, wsIds, arch2);
+          if (!chk.alive) { steps.push('reused:dead'); S.sessionId = ''; }
+          else {
+            steps.push('reused:' + S.sessionId.slice(0, 12)); needWake = !!chk.needWake;
+            if (!S.mainSessionId) { S.mainSessionId = String(S.sessionId); await saveState() }
+            // 锚点指向一个已归档的会话时，把锚点换成当前这个活着的（2026-09-13 加）。
+            // 不换的话每次 /ss 都要先跑一遍"锚点已归档"的判定；而且锚点是"永不失效"语义，
+            // 指着一个死会话本身就是坏数据。
+            if (S.mainSessionId && String(S.mainSessionId) !== String(S.sessionId) && arch2.indexOf(String(S.mainSessionId)) >= 0) {
+              steps.push('anchor-rebase:' + String(S.mainSessionId).slice(0, 12) + '->' + String(S.sessionId).slice(0, 12));
+              S.mainSessionId = String(S.sessionId); await saveState();
+            }
+          }
+          if (!S.sessionId) {
+            // **先认领、再新建**（与上面那条分支同样的判据）。
+            // 这条分支以前直接 create —— 于是"当前会话被判失效"（归档/移出工作区/体检判死）
+            // 就会多造一个主 agent，是"反复新建主 agent"的根因。
+            const adopted2 = await adoptExistingMain(sc, wc, wsIds, arch2, steps)
+            if (adopted2) { S.sessionId = adopted2; if (!S.mainSessionId) S.mainSessionId = adopted2 }
+            // 同上：活成员闸门（必须带上 arch2 —— 成员表里也含已归档的会话）
+            if (!S.sessionId) {
+              const live2 = await adoptLiveByTitle(sc, wsIds, arch2, steps)
+              if (live2) { S.sessionId = live2; if (!S.mainSessionId) S.mainSessionId = live2 }
+            }
+          }
+          if (!S.sessionId) {
+            try {
+              const made = await createSession(sc, wsId ? { workspaceId: wsId } : { cwd: AGENT_CWD }, steps);
+              const id = made && made.sessionId ? String(made.sessionId) : '';
+              if (!id) return { ok: false, error: 'create 未返回 id', steps };
+              S.sessionId = id; created = true; needWake = true; retargetQuote([loadedId], id, steps);
+              const archA = await readArchived(wc, []);
+              // 锚点为空或指着已归档会话时跟着新会话走（否则 mainSessionId 会停在死会话上）
+              if (!S.mainSessionId || (archA && archA.indexOf(String(S.mainSessionId)) >= 0)) { S.mainSessionId = id; steps.push('anchor-set:' + id.slice(0, 12)) }
+              steps.push('created:' + id.slice(0, 12)); steps.push('persist:' + (await saveState()));
+            } catch (e) { return { ok: false, error: 'create 失败：' + String((e && e.message) || e), steps } }
+          }
+        }
+        try { if (sc.resolveAgent) await sc.resolveAgent(S.sessionId); steps.push('resume:ok') } catch (e) { steps.push('resume:err') }
+        if (sc.rename) {
+          // 2026-09-17 下午：**别把"槽"的标题抹平**。`adoptRouteByTitle` 靠标题后缀（＝那条线配置的 `label`）认回会话，
+          //   而这里原来**无条件**把当前会话改名成通用标题 ⇒ 槽的标记被抹掉
+          //   （实测：THU 槽 `session-<示例>` 的标题就变成了无后缀的 `聊天摘要 · 主 Agent`，
+          //    侧栏里一行行同名、分不清谁是槽；一旦槽丢了还会因为认不回标题而**再造一个会话**）。
+          //   现在：当前会话属于某个槽 ⇒ 用那条线路的标题；否则才用通用标题。
+          const slotRoute = (String(S.sessionId) === String(S.sessThu || '')) ? R0
+                          : (String(S.sessionId) === String(S.sessParatera || '')) ? R1 : '';
+          const wantTitle = slotRoute
+            ? routeTitle(slotRoute)
+            : SESSION_TITLE;
+          if (S.renamedAs === wantTitle && !created) { steps.push('rename:skipped') }
+          else {
+            try { await sc.rename({ sessionId: S.sessionId, title: wantTitle }); S.renamedAs = wantTitle; steps.push('rename:ok:' + (slotRoute || 'main')) }
+            catch (e) { steps.push('rename:err') }
+          }
+        }
+        // 唤醒只对"这个具体会话"发一次（2026-09-13 用户报"每点一次就多发一次提示词"）。
+        // S.seeded 是全局布尔，会话一旦被判失效就被置回 false → 下一次 /ss 会给"新认领的旧会话"
+        // 再灌一遍 wakeText。改成按会话 id 记账：S.seededFor === 当前会话 id 就绝不重发。
+        if ((wantSeed || needWake) && !S.seeded && S.seededFor !== String(S.sessionId)) {
+          try {
+            await sc.prompt({ requestId: 'seed-' + Date.now(), sessionId: S.sessionId, mode: 'queue', content: [{ type: 'text', text: WAKE_TEXT }] }, FAKE_SIGNAL);
+            S.seeded = true; S.seededFor = String(S.sessionId); steps.push(needWake && !wantSeed ? 'wake:ok' : 'seed:ok'); await saveState();
+          } catch (e) { steps.push('seed:err'); noteError('seed', e) }
+        } else steps.push(S.seededFor === String(S.sessionId) && !S.seeded ? 'seed:alreadysent' : 'seed:skipped');
+        // 会话 id 变了就落盘。以前"被归档 → 认领锚点 → reused"这条路径从不 saveState，
+        // 于是内存里已是锚点、state.json 还留着那个已归档的 id（下次 loadState 会读回它，白绕一圈）。
+        if (String(S.sessionId || '') !== loadedId) { try { steps.push('persist:' + (await saveState())) } catch (e) {} }
+          return { ok: true, sessionId: S.sessionId, sessionTitle: SESSION_TITLE, steps, needWake, lastError: S.lastError };
+        })();
+        // 无论成败都要解开锁；失败结果也让并发的那些拿到（它们本来就是同一次请求的副本）
+        ensureInFlight = run.catch((e) => ({ ok: false, error: String((e && e.message) || e), steps: ['ensure:throw'] }))
+          .then((r) => { ensureInFlight = null; return r });
+        return ensureInFlight;
+      };
+
+      // ── 引用以「组装提示词时注入上下文」的形式送达主 agent（用户 2026-09-15 要求）──
+      // 实测机制（2026-09-15，探针 cfprb-4 + 读 dsh-agent-loop 源码）：
+      //   · systemPrompt.section() 落在**服务自己的 ctx**（不是调用者的），所以
+      //     "注册到 agent.ctx 上限定作用域"这条路走不通 —— 实测 agentCtx 注册也是全局可见；
+      //   · 真正的做法：注册**全局**项，在 text(context) 里用 context.scope 判定。
+      //     dsh-agent 的 assembleContextFor(agent) 就是 `{ scope: agent, signal }`。
+      //   · **用 context() 而不是 section()**（2026-09-15 用户问"为什么没有类似记忆插件那种
+      //     上下文注入的东西"）：dsh-agent-loop 的 preStep 是
+      //       sections = renderContextSections(assembly)
+      //       context  = runtimeContext.project(joinContextSections(sections), sections)
+      //     也就是说 **contexts 会被拼成一条 "Current runtime context. …" 的 user 消息**进对话，
+      //     而 sections 只进系统提示词（在对话里看不到）。记忆插件的快照就是走 contexts 那条路。
+      //     换成 context() 后：① 主 agent 真的"看到"一段独立上下文；② 你也能在对话里看到它 ——
+      //     正是用户要的那种形态。
+      //   · 一次性语义仍然成立：project() 只在新旧文本不同时才落一条消息；我们的 text 取走即清，
+      //     所以只会注入一轮，之后同一轮里重算得到空串（不会每步重复灌）。
+      // 文案必须与部署方的反馈流程一致（发布版不含任何部署方的具体规程）。
+      Promise.resolve().then(() => {
+        try {
+          const sp = ctx.get('systemPrompt');
+          if (!sp || !sp.context) { S.lastRouteError = 'systemPrompt.context 不可用：引用注入未注册'; return }
+          const off = sp.context({
+            name: 'dsh-chat-digest:quote',
+            order: 100,   // 运行时上下文块里最靠前（记忆快照在后面），让主 agent 先看到引用
+            text: (context) => {
+              try {
+                const q = S.quote;
+                if (!q) return '';
+                const agents = ctx.get('agents');
+                const scope = context ? context.scope : undefined;
+                if (!agents || !scope) {
+                  S.qdiag = { at: Date.now(), hit: false, why: 'no-scope', hasQ: true };
+                  return '';
+                }
+                const want = String(q.for || S.sessionId || '');
+                const sid = String(scope.id || (scope.session && scope.session.id) || '');
+                // 硬闸门：**必须有明确的"这条引用给谁"**，且 scope 就是那个会话。
+                // 实测（2026-09-15）踩过两次：
+                //   ① 用 S.sessionId 判身份 —— 它是内存态，插件重建后为空 → 永远注入不进去；
+                //   ② 退回"scope 是任意 session- 形态 agent 且全局唯一" —— agents.list() 里常年挂着
+                //      几十个历史 agent，`!== 1` 直接挡住；去掉唯一性后更糟：一条给主 agent 的引用
+                //      被注入到了**别的会话**（qdiag 记到 targetId=session-8731，那是 coder 会话）。
+                // 正解：引用在登记时记下 `for`（面板开着时 S.sessionId 已经被 /tell、/ss 填上），
+                // 组装时要求 `scope.id === for`。对不上就一个字都不注入。
+                if (!want) {
+                  S.qdiag = { at: Date.now(), hit: false, why: 'no-target-session', hasQ: true, scopeId: sid.slice(0, 12) };
+                  return '';
+                }
+                if (sid !== want) {
+                  S.qdiag = { at: Date.now(), hit: false, why: 'scope-not-target', hasQ: true, wantId: want.slice(0, 12), scopeId: sid.slice(0, 12) };
+                  return '';
+                }
+                S.quote = null;                                        // 一次性令牌：注入即清
+                S.qdiag = { at: Date.now(), hit: true, why: 'injected', hasQ: true, targetId: sid.slice(0, 12), wantId: want.slice(0, 12) };
+                return [
+                  // 2026-09-19：**编号与 id 都要给**（原来写 `q.no || q.id` ⇒ 有编号就把 id 藏了）。
+                  //   为什么要 id：面板编号 `#T1` 是**按渲染顺序派生的**（`lib\right.js` 里 `t += 1; x.__no = 'T' + t`），
+                  //   不是稳定键 —— 一旦条目增删/重排，同一个 `#T1` 就可能指向另一条。
+                  //   `id` 才是稳定键（`items-patch` / `POST /item` 都按 id 定位）。
+                  //   ⇒ 改条目**一律按 id**；`#T1` 只是给他看的显示号。判据见部署方自己的规程。
+                  '【用户引用了面板上的一条】#' + String(q.no || '?') + '（稳定 id＝`' + String(q.id || '') + '`）：' + String(q.text || ''),
+                  '',
+                  '他接下来那条消息就是在评价/修正这一条。**先判"他说的是这一条，还是这一类"，再决定做多重**：',
+                  '· **默认＝只改这一条**（绝大多数）：只改这一条、**最小改动**（他点到的那部分删掉或改掉，同条其余部分一个字不动）；',
+                  '  `POST /items` 回写；**回报 ≤2 行**，只写"改了什么"。',
+                  '  **不写文档、不写记忆、不派子代理、不碰别的条目、不重做整表。**',
+                  '· **例外＝立规矩**（少数）：他的话是**通则**（"以后这类别再报""所有 X 都按 Y 处理"），或同一个错别处也有',
+                  '  ⇒ 才沉淀：改 docs 对应文件 ＋ `mnemon_remember` 双写，并在回报里写明"落成了什么规则"。',
+                  '· 判据一句话：**他说的是"这一条"还是"这一类"**？拿不准就**问一句**（`ask_user_question`）—— **不许默认做重的那个**。',
+                  '  （2026-09-18 实测教训：一句"作业做完了一天"触发了"改 lessons ＋ 写记忆（还起了子代理）"，11 步 / 11 次工具调用，',
+                  '   而他要的只是把那天删掉。）',
+                  '· **改条目一律按上面那个「稳定 id」**（`items-patch` / `POST /item` 都按 id 定位）——',
+                  '  `#T1` 只是给他看的显示号，**它是按渲染顺序派生的**（条目一增删/重排，同一个 `#T1` 可能指另一条）。',
+                  '· **永不撤销他在面板上的勾选/删除**（`toggle`/`delete`/`clear-done`）。',
+                  '注意：本条引用是**独立注入的上下文**，不在他的输入框里；不要去找输入框里的前缀。',
+                ].join('\n');
+              } catch (e) { return '' }
+            },
+          });
+          disposers.push(off);
+          S.lastRouteError = '';
+        } catch (e) { S.lastRouteError = '注入段注册失败：' + String((e && e.message) || e) }
+      });
+
+      const disposers = [];
+      const route = (method, endpoint, handler) => {
+        try {
+          const off = ws.register({ kind: 'exact', path: API + endpoint, handler: async (req, res) => {
+            try {
+              const r = reject(req); if (r !== undefined) return send(res, r === 401 ? 401 : 403, { ok: false, error: '未授权' });
+              if (req.method !== method) return send(res, 405, { ok: false, error: '方法不支持' });
+              const body = method === 'POST' ? await readBody(req) : undefined;
+              send(res, 200, await handler(body, req));
+            } catch (e) { noteError('route ' + endpoint, e); send(res, 500, { ok: false, error: String((e && e.message) || e) }) }
+          } });
+          disposers.push(off);
+          return true;
+        } catch (e) {
+          S.lastRouteError = endpoint + ': ' + String((e && e.message) || e);
+          console.error('[cf] route ' + endpoint, e);
+          return false;
+        }
+      };
+      const serveFile = (url, file) => {
+        try {
+          const off = ws.register({ kind: 'exact', path: url, handler: async (req, res) => {
+            try {
+              const r = reject(req); if (r !== undefined) { res.writeHead(r === 401 ? 401 : 403); res.end('forbidden'); return }
+              const text = await fsSvc.readText(await fsSvc.resolve(DIR + file));
+              res.writeHead(200, { 'Content-Type': 'application/javascript; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(text)
+            } catch (e) { try { res.writeHead(500); res.end('err') } catch (e2) {} }
+          } });
+          disposers.push(off);
+          return true;
+        } catch (e) { S.lastRouteError = file + ': ' + String((e && e.message) || e); console.error('[cf] serve ' + file, e); return false }
+      };
+
+      // ---- A01③（2026-09-20 全量审计）：本机文件 / 图片的读取路由 ----
+      //   用户 2026-09-20：「像这种地方，不是应该给出本地文件的超链接，我点一下就可以打开吗」
+      //   面板正文里写 `[名字](file:路径)` / `![说明](img:路径)`，客户端（lib/right.js）把它们
+      //   渲染成 `<a>` / `<img>`，指向这里取字节。
+      //   **路径必须限定**：只允许 FILE_ROOTS 之内；拒绝任何 `..`、拒绝根外的绝对路径、拒绝 UNC。
+      //   **允许根**：可在 config.fileRoots（数组）里覆盖；缺省＝`config.wxRoot`（微信附件根）+ 主 agent 工作区的 output。
+      //   `wxRoot` **没有缺省值**（发布包里不能写死任何人的微信目录）⇒ 不配就只认 output 那一根。
+      const FILE_ROOTS = (Array.isArray(CF.fileRoots) && CF.fileRoots.length) ? CF.fileRoots.map(String) : [
+        (typeof CF.wxRoot === 'string' ? CF.wxRoot : ''),
+        AGENT_CWD + '\\output',
+        INBOX_DIR,
+      ].filter(Boolean);
+      const FILE_MAX = 200 * 1024 * 1024;      // 单次最多发 200 MB（防把宿主读爆）
+      const MIME_BY_EXT = {
+        pdf: 'application/pdf', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg',
+        gif: 'image/gif', webp: 'image/webp', bmp: 'image/bmp', svg: 'image/svg+xml',
+        txt: 'text/plain; charset=utf-8', md: 'text/plain; charset=utf-8',
+        csv: 'text/plain; charset=utf-8', json: 'application/json; charset=utf-8',
+        docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+        zip: 'application/zip', mp4: 'video/mp4', mp3: 'audio/mpeg',
+      };
+      const mimeOf = (p) => {
+        const m = /\.([A-Za-z0-9]+)$/.exec(String(p || ''));
+        return MIME_BY_EXT[(m ? m[1] : '').toLowerCase()] || 'application/octet-stream';
+      };
+      const inRoot = (abs) => {
+        const a = String(abs).replace(/\//g, '\\').toLowerCase();
+        for (const r of FILE_ROOTS) {
+          const rr = r.toLowerCase();
+          if (a === rr || a.indexOf(rr + '\\') === 0) return true;
+        }
+        return false;
+      };
+      //: `p` → 候选绝对路径（相对路径按每个允许根各拼一个；本身是绝对路径时只校验在根内）
+      const fileCandidates = (p) => {
+        let s = String(p || '').trim();
+        if (!s) return [];
+        s = s.replace(/^(file|img):/i, '');                  // 容忍带前缀
+        s = s.replace(/\\/g, '/');
+        if (s.split('/').indexOf('..') >= 0) return [];       // 拒绝任何 ..
+        if (/^[A-Za-z]:/.test(s) || s.indexOf('//') === 0) {  // 绝对路径 / UNC：必须在允许根内
+          const abs = s.replace(/\//g, '\\');
+          return inRoot(abs) ? [abs] : [];
+        }
+        const rel = s.replace(/^\/+/, '');
+        return FILE_ROOTS.map((r) => (r + '\\' + rel).replace(/\//g, '\\')).filter(inRoot);
+      };
+      const serveLocal = () => {
+        try {
+          const off = ws.register({ kind: 'exact', path: API + 'file', handler: async (req, res) => {
+            const jerr = (code, obj) => { try { res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(obj)) } catch (e) {} };
+            try {
+              const r = reject(req); if (r !== undefined) { res.writeHead(r === 401 ? 401 : 403); res.end('forbidden'); return }
+              let p = '';
+              try { p = new URL(String((req && req.url) || ''), 'http://127.0.0.1').searchParams.get('p') || '' } catch (e) {}
+              const cands = fileCandidates(p);
+              if (!cands.length) { jerr(400, { ok: false, error: '路径不被允许：只接受配置的允许根（fileRoots / wxRoot / 主 agent 工作区的 output）之内的路径（拒绝 .. 与根外绝对路径）', p: p }); return }
+              if (typeof fsSvc.stat !== 'function' || typeof fsSvc.readBytes !== 'function') {
+                jerr(501, { ok: false, error: '当前 fs 服务没有 stat/readBytes，发不了本机文件', p: p }); return;
+              }
+              let target = null, info = null;
+              for (const c of cands) {
+                try { const t = await fsSvc.resolve(c); const i = await fsSvc.stat(t); if (i) { target = t; info = i; break } } catch (e) {}
+              }
+              if (!target) { jerr(404, { ok: false, error: '文件不在本机（可能被移动，或本来就没下载）', p: p, tried: cands }); return }
+              const size = Number((info && info.size) || 0);
+              if (size > FILE_MAX) { jerr(413, { ok: false, error: '文件 ' + size + ' 字节，超过单次发送上限 ' + FILE_MAX, path: target.displayPath }); return }
+              const data = await fsSvc.readBytes(target, undefined, size > 0 ? size : FILE_MAX);
+              res.writeHead(200, { 'Content-Type': mimeOf(target.displayPath || p), 'Cache-Control': 'no-store',
+                                   'Content-Disposition': 'inline' });
+              res.end(data);
+            } catch (e) { jerr(500, { ok: false, error: String((e && e.message) || e) }) }
+          } });
+          disposers.push(off);
+          return true;
+        } catch (e) { S.lastRouteError = 'file: ' + String((e && e.message) || e); console.error('[cf] route file', e); return false }
+      };
+      serveLocal();
+
+      // 本机调试通道：/state 带上 authUrl（只给 127.0.0.1，别的来源给空串）
+      const isLocal = (req) => {
+        try {
+          const a = String((req && req.socket && req.socket.remoteAddress) || '');
+          return a === '127.0.0.1' || a === '::1' || a === '::ffff:127.0.0.1';
+        } catch (e) { return false }
+      };
+      let authUrlCache = '';
+      const authUrlFor = (req) => {
+        if (!isLocal(req)) return '';
+        if (authUrlCache) return authUrlCache;
+        try {
+          authUrlCache = conn && conn.authenticatedUrl ? String(conn.authenticatedUrl('http://127.0.0.1:3080/')) : '';
+        } catch (e) { authUrlCache = '' }
+        return authUrlCache;
+      };
+
+      // 引用登记时用的"这条给谁"：S.sessionId 是内存态，插件重建后可能还是空的
+      // （只有 /ss、/tell、/chat 会 loadState）。空的时候就现算一次 —— 判据与 /ss 一致：
+      // 未归档的工作区成员里，标题精确等于 SESSION_TITLE 的**唯一**那个。
+      // 空着会怎样：注入段的硬闸门（scope.id === quote.for）永远不通过 → 引用永远送不出去。
+      const ensureQuoteTarget = async () => {
+        if (S.sessionId) return String(S.sessionId);
+        try { await loadState() } catch (e) {}
+        if (S.sessionId) return String(S.sessionId);
+        try {
+          const wc = ctx.get('workspaceController');
+          if (!wc || !wc.create) return '';
+          const made = await wc.create({ path: AGENT_CWD });
+          const w = made && made.workspace;
+          const members = (w && w.sessionIds ? w.sessionIds : []).map(String);
+          let arch = [];
+          try { const it = wc.follow(FAKE_SIGNAL); const r = await race(it.next(), 1500); arch = ((((r || {}).value || {}).value || {}).archivedSessionIds || []).map(String); try { if (it.return) it.return() } catch (e) {} } catch (e) {}
+          const hits = [];
+          for (let i = 0; i < members.length && i < 60; i++) {
+            const id = members[i];
+            if (!id.startsWith('session-')) continue;
+            if (arch.indexOf(id) >= 0) continue;
+            const meta = await sessionMeta(fsSvc, id);
+            if (meta && isMainTitle(meta.title)) hits.push(id);
+          }
+          if (hits.length === 1) return hits[0];
+        } catch (e) { noteError('ensureQuoteTarget', e) }
+        return '';
+      };
+      // 待发引用的"**重新指向**"（2026-09-18 新增）。
+      // 病灶：`quote.for` 冻的是**登记那一刻**的会话。如果他先归档了那个会话、插件随后又新建了主会话，
+      //   注入段的硬闸门 `scope.id === for` 就永远对不上 ⇒ **引用一个字都进不去**，主 agent 只能回
+      //   "无引用注入"（实测 2026-09-18 21:45：THU 会话 21:45:11 被归档、21:45:29 插件新建了主会话，
+      //   那一次引用就这么丢了；当时 `qdiag` 一直是空 —— 因为回调里 `S.quote` 压根没被认成有效目标）。
+      // **只在「原目标已经死了」时才改判**，且只改指向**本插件刚建出来的那个会话** —— 这个限制是必需的：
+      //   2026-09-15 踩过"退回任意 session 形态 ⇒ 引用注进了别的会话（coder 会话）"。
+      const retargetQuote = (deadIds, toId, steps) => {
+        if (!S.quote || !toId) return;
+        const cur = String(S.quote.for || '');
+        if (cur === String(toId)) return;
+        const dead = !cur || (deadIds || []).some((x) => x && String(x) === cur);
+        if (!dead) return;                    // 原目标还活着（可能是另一条线路的会话）⇒ 一个字都不动
+        S.quote.for = String(toId);
+        if (steps && steps.push) steps.push('quote-retarget:' + (cur ? cur.slice(0, 12) : '(none)') + '->' + String(toId).slice(0, 12));
+      };
+
+      const registered = { ui: serveFile(SCRIPT_UI, 'ui.js'), right: serveFile(SCRIPT_RIGHT, 'right.js') };
+      const routeOk = {};
+      // ---- A20（2026-09-21 用户要求）：**所有文件都用本机默认应用打开** ----
+      //   起因：`file:` 链接原先指向 `/api/file`（发字节）—— 浏览器对 docx/xlsx/exe 只会**再下载一份**
+      //   （用户实测：点一下又下了一遍），而他要的是"我点一下就可以打开"。
+      //   这里加一条**启动**路由：宿主用 `ctx.subprocess` 起 `cmd /c start "" "<绝对路径>"`
+      //   （＝Windows 上走 ShellExecute 的打开动词，交给该扩展名的默认应用）。
+      //   闸门与 `/api/file` **完全一致**：`route()` 自带 `reject(req)` 信任栅栏（Host/Origin + 登录 cookie），
+      //   路径必须落在允许根内、且真实存在 —— 不允许"点一下就执行任意路径"。
+      //   `img:` 仍走 `/api/file`（图片要取字节才能内嵌显示），不受影响。
+      const spawnOpen = async (abs) => {
+        const sp = ctx.get('subprocess');
+        if (!sp || typeof sp.spawn !== 'function') return { ok: false, error: '宿主没有 subprocess 服务，无法用默认应用打开' };
+        let exe = 'C:\\Windows\\System32\\cmd.exe';
+        try { const r = await sp.resolveExecutable('cmd.exe'); if (r) exe = r } catch (e) {}
+        const cwd = String(abs).replace(/[\\/][^\\/]*$/, '') || 'C:\\';
+        try {
+          const h = sp.spawn({ argv: [exe, '/c', 'start', '', String(abs)], cwd: cwd,
+                               stdio: { stdin: 'ignore', stdout: 'ignore', stderr: 'ignore' }, graceMs: 3000 });
+          if (h && h.done && typeof h.done.catch === 'function') h.done.catch(() => {});
+          return { ok: true, how: 'cmd-start', exe: exe, path: String(abs) };
+        } catch (e) { return { ok: false, error: String((e && e.message) || e) } }
+      };
+      routeOk.open = route('POST', 'open', async (body) => {
+        const p = String((body && body.p) || '');
+        const cands = fileCandidates(p);
+        if (!cands.length) return { ok: false, error: '路径不被允许：只接受配置的允许根（fileRoots / wxRoot / 主 agent 工作区的 output）之内的路径（拒绝 .. 与根外绝对路径）' };
+        if (typeof fsSvc.stat !== 'function') return { ok: false, error: '当前 fs 服务没有 stat，无法确认文件存在' };
+        let hit = '';
+        for (const c of cands) { try { const t = await fsSvc.resolve(c); if (await fsSvc.stat(t)) { hit = c; break } } catch (e) {} }
+        if (!hit) return { ok: false, error: '文件不在本机（可能被移动，或本来就没下载）', tried: cands };
+        const r = await spawnOpen(hit);
+        // 观测（A66 的纪律）：最近一次"用默认应用打开"的结果留在内存里、由 `/state` 回显，
+        // 失败时不必再猜是路径问题还是服务缺失。
+        S.lastOpenAt = Date.now(); S.lastOpenPath = hit; S.lastOpenOk = !!r.ok;
+        S.lastOpenHow = String(r.how || r.error || '');
+        return r;
+      });
+      // A23（2026-09-25 用户问"为什么多了一堆主agent"）：**归档一条多余的会话**。
+      //   之前没有任何入口能做这件事（`dsh` CLI 没有 session 子命令，归档只存在于 `workspaceController` 里），
+      //   所以"多出来的主 agent"只能一直堆在侧栏。这里开一个受闸门保护的接口给面板用。
+      //   保护三条：① 只接受 `session-` 形状的 id；② **当前会话与两个槽里的会话一律拒绝**（那三条是活的）；
+      //   ③ 走 `route()`，自带 `reject(req)` 信任栅栏（Host/Origin + 登录 cookie）。
+      routeOk.archive = route('POST', 'archive', async (body) => {
+        const id = String((body && body.sessionId) || '');
+        if (!/^session-[0-9a-f-]{8,}$/i.test(id)) return { ok: false, error: '只接受 session- 开头的会话 id' };
+        if (id === String(S.sessionId || '') || id === String(S.sessThu || '') || id === String(S.sessParatera || '')) {
+          return { ok: false, error: '它是当前会话或槽里的会话，不能归档（要换会话请用 /rotate 或 /route-pick）' };
+        }
+        const wc = ctx.get('workspaceController');
+        if (!wc || !wc.archiveSession) return { ok: false, error: 'workspaceController 不可用' };
+        try { await wc.create({ path: AGENT_CWD }) } catch (e) {}
+        try {
+          const v = await wc.archiveSession({ sessionId: id });
+          S.extraMains = (Array.isArray(S.extraMains) ? S.extraMains : []).filter((x) => String((x && x.id) || '') !== id);
+          S.extraMainsAt = Date.now();
+          S.note = '已归档多余的会话 ' + id.slice(0, 12) + '（' + cstHM() + '）';
+          await saveState();
+          return { ok: true, archived: id,
+                   archivedCount: (v && Array.isArray(v.archivedSessionIds)) ? v.archivedSessionIds.length : null };
+        } catch (e) { return { ok: false, error: '归档失败：' + String((e && e.message) || e) } }
+      });
+      /* ---------- 「获取」/「自动」两个按钮的真实接线（2026-09-13） ---------- */
+      // CST 口径：一律 +8 显式偏移（本机时区不可信，见 DEV_NOTES 第 1 条）
+      const cst = (ms) => new Date((ms === undefined ? Date.now() : ms) + 8 * 3600 * 1000);
+      const cstDay = (ms) => cst(ms).toISOString().slice(0, 10);
+      const cstHM = (ms) => cst(ms).toISOString().slice(11, 16);
+
+      // ── 通用缺省轮次提示词（发布版）──────────────────────────────────────────────
+// 部署方放 `local/round.md` 覆盖（支持 `{date}` / `{mode}` 占位符）。
+const ROUND_GENERIC = (date, mode) => [
+  "【聊天摘要 · 本轮】日期 {date}，模式 {mode}。",
+  "",
+  "1) **取数**：读 `{inbox}` 下递归的 `*.txt` / `*.md` / `*.json`。跑没跑**以读到的产物为准**，不凭印象；",
+  "   目录是空的就照实说。部署方另有规程的，以规程为准。",
+  "2) **提炼**：从里面挑出**对人有用的事**，做成面板条目（一句话总结 ＋ 按信息量定的正文）。",
+  "3) **回写**：`POST /chat-feed/api/items-patch` 打补丁；新条目带 `isNew`。",
+  "4) **回报**：读到了什么、写了哪几条、哪些没做成。",
+].join('\n');const roundPrompt = (date, reason, since, mode) => {
+  const tpl = (typeof CF.roundText === 'string' && CF.roundText) ? CF.roundText : '';
+  if (tpl) return tpl.replace(/\{date\}/g, date).replace(/\{mode\}/g, String(mode || ''))
+    .replace(/\{inbox\}/g, INBOX_DIR);
+  return ROUND_GENERIC(date, mode);
+};
+
+      const turnEnds = async (sc, sid) => {
+        try {
+          const ins = await sc.inspect(sid || S.sessionId, FAKE_SIGNAL);
+          return ((ins && ins.events) || []).filter((e) => e && e.type === 'turn/end').length;
+        } catch (e) { return null }
+      };
+      // 这个会话的"回合状态"：ends=已结束的回合数 ｜ open=最后一个回合还没结束（＝正在干活）
+      // 2026-09-17 晚加：busy 收尾要靠它自愈（原来只比"turn/end 计数变大"，一旦中途换了会话就永远对不上）
+      const turnState = async (sc, sid) => {
+        try {
+          const ins = await sc.inspect(sid || S.sessionId, FAKE_SIGNAL);
+          const evs = (ins && ins.events) || [];
+          let lastTurn = -1, ends = 0, lastReason = ''; const ended = {};
+          // A22（2026-09-22 用户问"为什么昨天还是没有自动获取"）：**顺手读出"主 agent 正在等你回答的提问"**。
+          //   实测 2026-09-21 那轮：23:35:59 它调了 `ask_user_question`（问 15 条勾选要不要删），随后**一直等**；
+          //   而自动轮**不把会话弹到前台**，用户根本不知道有提问 ⇒ 90 秒后 `turn/end reason={"kind":"interrupted"}`，
+          //   整晚的取数白跑（产物写到 23:37:32 就停了）。
+          //   判据：最后一条 `tool/call` 且 name=ask_user_question，之后**没有对应的 tool/result** ⇒ 还没被回答。
+          let ask = null, askAnswered = false;
+          for (let i = 0; i < evs.length; i++) {
+            const e = evs[i]; if (!e || !e.data) continue;
+            if (e.type === 'turn/start') lastTurn = Math.max(lastTurn, Number(e.data.turn) || 0);
+            if (e.type === 'turn/end') {
+              const t = Number(e.data.turn) || 0; ended[t] = true; ends++; lastTurn = Math.max(lastTurn, t);
+              // **最后一个回合是怎么结束的**：'completed' 正常 ｜ 'error' 异常（实测 "Stream ended without
+              //   finish_reason" ⇒ {kind:'error',error:{code:'TRANSPORT'}}）｜ 'aborted' 被停 ｜ 'interrupted' 被打断
+              lastReason = (e.data.reason && e.data.reason.kind) ? String(e.data.reason.kind) : '';
+            }
+            if (e.type === 'tool/call' && String(e.data.name || '') === 'ask_user_question') {
+              ask = { callId: String(e.data.callId || ''), at: Number(e.time) || Number(e.data.time) || Date.now(),
+                      turn: Number(e.data.turn) || 0, raw: String(e.data.arguments || '') };
+              askAnswered = false;
+            } else if (e.type === 'tool/result' && ask && !askAnswered) {
+              askAnswered = true;
+            }
+          }
+          // 把提问原文解析成可显示的形状（**放在 turnState 里**：checkBusy 与探针都要用同一份解析）。
+          // **还必须要求"那个 turn 还没结束"**：2026-09-21 turn 4 的提问永远不会有 tool/result
+          //   （它随 turn 被 interrupted 一起作废），只看"有没有 result"会把它**永远**当成"在等你"。
+          let askOut = null;
+          if (ask && !askAnswered && !ended[ask.turn]) {
+            const qs = [];
+            try {
+              const a = JSON.parse(ask.raw || '{}');
+              (a.questions || []).slice(0, 4).forEach((q) => qs.push({
+                header: String(q.header || '').slice(0, 40),
+                question: String(q.question || '').slice(0, 400),
+                options: (q.options || []).slice(0, 5).map((o) => String(o.label || '').slice(0, 60)),
+              }));
+            } catch (e) {}
+            askOut = { callId: ask.callId, at: ask.at, raw: ask.raw, questions: qs };
+          }
+          return { ends: ends, open: lastTurn >= 0 && !ended[lastTurn], lastReason: lastReason, ask: askOut };
+        } catch (e) { return null }
+      };
+
+      // ---- 双会话：每条线一个（由 config.routes 决定），按探测结果选一个唤醒（2026-09-17 定案）----
+      
+      // 「这个会话还活着吗」——**首选工作区成员表**（`wc.create` 返回的 sessionIds，不分页、最权威），
+      // 列表兜底。2026-09-17 踩过：只用 `sc.list()` 会漏掉不在**首页**的旧会话，
+      // 于是 sessParatera 没认领到那个很长的旧会话、反而新建了一个 ⇒ 一定要以成员表为准。
+      const wsSessionIds = async (wc) => {
+        try {
+          if (!wc || !wc.create) return null;
+          const made = await race(wc.create({ path: AGENT_CWD }), 4000);
+          const w = made && made.workspace;
+          return (w && w.sessionIds) ? w.sessionIds.map(String) : null;
+        } catch (e) { return null }
+      };
+      const liveOk = async (sc, id, wc) => {
+        if (!id) return false;
+        const ids = await wsSessionIds(wc);
+        if (ids && ids.indexOf(String(id)) >= 0) return true;    // 在工作区里 ⇒ 活着
+        const s = await sessionSummary(sc, id);
+        if (s && s.sessionId) return true;                      // 列表里能找到也算
+        return false;
+      };
+      // **当前活跃会话属于哪条线路** —— 阈值必须按"会话实际所在的线路"取，不能按 routePick
+      // （2026-09-17 踩过：routePick=thu 而活跃会话还是 paratera 那个 1M 会话 ⇒ ctxLimit 被算成 0.9×1M=900k）
+      const routeOfActive = () => {
+        const cur = String(S.sessionId || '');
+        if (cur && cur === String(S.sessThu || '')) return R0;
+        if (cur && cur === String(S.sessParatera || '')) return R1;
+        return String(S.routePick || '');
+      };
+      const setRouteModel = async (sc, id, route) => {
+        const m = ROUTE_MODELS[route];
+        try {
+          if (sc.resolveAgent) { try { await sc.resolveAgent(id) } catch (e) {} }
+          const req = { sessionId: id, provider: m.provider, model: m.model };
+          if (m.effort) req.reasoningEffort = m.effort;
+          const r = await sc.selectModel(req);
+          const sel = (r && r.selected) || null;
+          return { ok: !!sel, selected: sel ? { provider: String(sel.provider), model: String(sel.model),
+                                                 reasoningEffort: sel.reasoningEffort ? String(sel.reasoningEffort) : '' } : null };
+        } catch (e) { return { ok: false, error: String((e && e.message) || e) } }
+      };
+      const createRouteSession = async (route, steps) => {
+        const sc = ctx.get('sessionController'), wc = ctx.get('workspaceController');
+        let wsId = '';
+        try {
+          if (wc && wc.create) {
+            const made = await race(wc.create({ path: AGENT_CWD }), 4000);
+            const w = made && made.workspace;
+            if (w && w.workspaceId) wsId = String(w.workspaceId);
+          }
+        } catch (e) { steps.push('ws:err') }
+        let id = '';
+        try {
+          const made = await createSession(sc, wsId ? { workspaceId: wsId } : { cwd: AGENT_CWD }, steps);
+          id = made && made.sessionId ? String(made.sessionId) : '';
+        } catch (e) { steps.push('create:err ' + String((e && e.message) || e)); return '' }
+        if (!id) { steps.push('create:empty'); return '' }
+        steps.push('created:' + id.slice(0, 12) + ':' + route);
+        try { await sc.rename({ sessionId: id, title: routeTitle(route) }); steps.push('rename:ok') } catch (e) { steps.push('rename:err') }
+        // **必须先切模型、再灌唤醒文案**（2026-09-17 实测踩到）：灌文案会**立刻起一个 turn**，
+        //   而 selectModel 要到"下一次提示词组装"才生效 ⇒ 顺序反了的话，这个新会话的**第一轮会跑在默认线路上**。
+        //   实测后果：THU 会话的第一轮实际发去了 paratera（`request/header reason=initial provider=paratera`），
+        //   既花了钱，又让该会话把 `contextWindow` 记成 1,000,000（阈值被算成 0.9×1M=900k，盖住了它真实的 200k）。
+        const sm = await setRouteModel(sc, id, route);
+        steps.push('model:' + (sm.ok ? (sm.selected.provider + '/' + sm.selected.model) : ('err ' + String(sm.error || ''))));
+        try {
+          await sc.prompt({ requestId: 'seed-' + route + '-' + Date.now(), sessionId: id, mode: 'queue',
+                            content: [{ type: 'text', text: WAKE_TEXT }] }, FAKE_SIGNAL);
+          steps.push('wake:ok');
+        } catch (e) { steps.push('wake:err') }
+        return id;
+      };
+      // 按标题认领**某条线路**的既有会话（**最新**的那个优先）—— 重启后槽若没持久化（或老版本没存），
+      //   靠这个把上次那两个会话认回来，**而不是又新建一个**（2026-09-17 实测：因为槽字段没进白名单，
+      //   每次重启都重造一个 THU 会话，一天就攒出好几个）。`exclude` 用来避免两条线路抢同一个会话。
+      const adoptRouteByTitle = async (wsIds, title, exclude, steps) => {
+        const list = (wsIds || []).map(String);
+        const skip = (exclude || []).map(String);
+        const cands = [];
+        for (let i = 0; i < list.length && i < 60; i++) {
+          const id = list[i];
+          if (!id.startsWith('session-')) continue;
+          if (skip.indexOf(id) >= 0) continue;
+          const meta = await sessionMeta(ctx.get('fs'), id);
+          const want = Array.isArray(title) ? title : [title];
+          if (meta && want.indexOf(String(meta.title)) >= 0) cands.push({ id: id, createdAt: (meta.createdAt || 0) });
+        }
+        if (!cands.length) return '';
+        cands.sort((a, b) => b.createdAt - a.createdAt);      // 最新优先：新的那个更干净（老的那个可能沾过别的线路）
+        steps.push('adopt-title:' + cands[0].id.slice(0, 12) + ':' + title.slice(-8));
+        return cands[0].id;
+      };
+
+      // 这条路线该用哪个会话：① 已存的槽还活着就用它 ② paratera 槽可以把"现在的主会话"（本来就是 paratera）认领过来 ③ 否则新建
+      const ensureRouteSession = async (route, steps) => {
+        const sc = ctx.get('sessionController'), wc = ctx.get('workspaceController');
+        const key = routeSlotKey(route);
+        const stored = String(S[key] || '');
+        if (stored && await liveOk(sc, stored, wc)) { await setRouteModel(sc, stored, route); return stored }
+        if (stored) { steps.push('slot-stale:' + route); S[key] = '' }
+        // ② 槽空时**先按标题认回既有会话**（重启后槽没持久化也别新建）
+        try {
+          const ids = await wsSessionIds(wc);
+          const other = String((String(route) === String(R0) ? S.sessParatera : S.sessThu) || '');
+          const found = await adoptRouteByTitle(ids, routeTitles(route), [other], steps);
+          if (found) { S[key] = found; await setRouteModel(sc, found, route); return found }
+        } catch (e) { steps.push('adopt-title:err') }
+        if (String(route) === String(R1)) {
+          const cur = String(S.sessionId || '');
+          if (cur && await liveOk(sc, cur, wc)) { S[key] = cur; steps.push('adopt-current-as-' + String(route)); return cur }
+        }
+        const made = await createRouteSession(route, steps);
+        if (made) S[key] = made;
+        return made;
+      };
+      const pickRoute = async (route, why) => {
+        const r = (String(route) === String(R1)) ? R1 : R0;
+        const steps = [];
+        if (S.busy) return { ok: false, error: '上一轮还在跑（不切会话）', busy: true, steps };
+        const id = await ensureRouteSession(r, steps);
+        if (!id) return { ok: false, error: '拿不到 ' + r + ' 的会话', steps };
+        const changed = String(S.sessionId || '') !== id;
+        S.sessionId = id; S.mainSessionId = id;
+        S.routePick = r; S.routeAt = Date.now(); S.routeWhy = String(why || '');
+        if (changed) {
+          S.seeded = false;
+          // 换了会话 ⇒ 上下文用量那几个数**必须清零**，否则 /state 会拿**上一个会话**的用量冒充当前会话
+          //（2026-09-17 踩过：切到 THU 会话后仍显示老会话的 ctxWindow=1000000 / ctxLimit=900000）
+          S.ctxTokens = 0; S.ctxWindow = 0; S.ctxLimit = 0; S.ctxPct = 0;
+        }
+        steps.push('active:' + id.slice(0, 12) + (changed ? '(changed)' : '(same)'));
+        await saveState();
+        return { ok: true, route: r, sessionId: id, changed, model: ROUTE_MODELS[r], steps };
+      };
+      // 插件侧连通性探测（**唤醒之前**就定好，不花主 agent 的步数）：无凭据的可达性检查 ——
+      //   任何 HTTP 响应（含 401/403）都算"网关活着"；5xx / 网络错误 / 超时算"不通"。
+      // 2026-09-17 用户要求：「获取」按钮改成下拉菜单、点了哪条线路就**直接探测哪条** ⇒ 这里加 `want` 参数。
+      //   · `want` 给了（'thu'/'paratera'）⇒ **只探它**，`out.route` 就是它（通了不通都如实回报，不回退）
+      //   · `want` 没给 ⇒ 老行为：只探 THU，通了 route='thu'、不通 route='paratera'
+      const pluginProbe = async (want) => {
+        const only = (typeof ROUTES !== 'undefined' && routeIds().indexOf(String(want)) >= 0) ? String(want) : '';
+        const target = only || DEFAULT_ROUTE;
+        const out = { at: Date.now(), ok: false, status: 0, ms: 0, err: '', route: target };
+        if (typeof fetch !== 'function') { out.err = '宿主无 fetch（由主 agent 自己判线路）'; out.route = only || target; S.routeProbe = out; return out }
+        // 2026-09-25「装完就能用」：线路没配 `probeUrl` 时**跳过探测**。
+        //   旧行为是直接 fetch(undefined) ⇒ 抛错 ⇒ ok=false ⇒ 陌生人点「获取」必然闪红、永远跑不起来。
+        //   没有端点可探时，「不知道通不通」就等于「就让它跑吧」，由模型/网络自己给出结果。
+        if (!PROBE_URL[target]) {
+          out.ok = true; out.skipped = true; out.ms = 0;
+          out.err = ''; out.note = '未配置 probeUrl，跳过网关探测';
+          S.routeProbe = out; S.routeNeedsConfirm = false;
+          await saveState();
+          return out;
+        }
+        const t0 = Date.now();
+        try {
+          const ac = (typeof AbortController === 'function') ? new AbortController() : null;
+          const timer = ac ? setTimeout(() => { try { ac.abort() } catch (e) {} }, 4000) : null;
+          const res = await fetch(PROBE_URL[target],
+                                  ac ? { signal: ac.signal, headers: { accept: 'application/json' } }
+                                     : { headers: { accept: 'application/json' } });
+          if (timer) clearTimeout(timer);
+          out.status = Number(res.status) || 0;
+          out.ok = out.status > 0 && out.status < 500;
+        } catch (e) { out.err = String((e && e.message) || e) }
+        out.ms = Date.now() - t0;
+        // A06（2026-09-20 审计 H08）：**返回的路由必须就是刚才探的那个**。
+        //   旧版写死 `out.route = out.ok ? 'thu' : 'paratera'` —— 默认探测目标早已是
+        //   `DEFAULT_ROUTE='paratera'`，于是"探 paratera 成功"被标成 `route='thu'`，
+        //   下游按 route 去选会话就选错线路（探针实测 requested=synthetic-paratera 而 route=thu）。
+        //   现在：成功 ⇒ 就是 target；失败 ⇒ 给"另一条"作为回退提示（调用方另有 gwPolicy 分支）。
+        if (!only) out.route = out.ok ? target : (String(target) === String(R1) ? R0 : R1);
+        S.routeProbe = out;
+        S.routeNeedsConfirm = !out.ok;      // THU 不通 ⇒ 暂定 paratera，但要主 agent **先问他**（付费线路不许自动切）
+        await saveState();
+        return out;
+      };
+
+      // 载入后**尽快把两个会话都备好**（用户 2026-09-17：「开一个 THU 的会话，开一个 paratera 的会话，按需切换使用」）
+      //   幂等：槽还活着就复用；paratera 槽会认领"现在这个主会话"（那个很长的旧会话），**不会新建**。
+      //   不阻塞任何路由：第一次被问 `/state` 时后台起一次（UI 每 10 秒轮询 ⇒ 重启后约 10 秒内两个会话就位）。
+      const ensureBothSlots = async () => {
+        if (S.slotsInitBusy) return;
+        // **带版本号**：改过槽逻辑就 +1 ⇒ 下次载入会**再跑一次**初始化（否则 `slotsInitAt` 已存在，新的自愈逻辑永远轮不到）
+        const SLOTS_VER = 3;
+        if (S.slotsInitAt && Number(S.slotsInitVer || 1) >= SLOTS_VER) return;
+        S.slotsInitBusy = true;
+        const steps = [];
+        try {
+          await ensureSession(false);                       // 先用既有的认领/采纳逻辑确立"当前主会话"
+          // **不做自动认领老会话**（2026-09-17 用户选定）：paratera 槽就用它自己那个会话（首次初始化新建的那个，干净、1M 全空）。
+          //   那个攒了很久上下文的老会话**留在侧栏不动**（用户可自行归档）—— 想手工挂载就用 `POST /chat-feed/api/route-adopt`。
+          await ensureRouteSession(R1, steps);      // 槽空/失效才新建；已有活着的就复用
+          await ensureRouteSession(R0, steps);           // THU 槽：新建一个独立会话（新会话 ⇒ 200k 放得下）
+          S.slotsInitAt = Date.now(); S.slotsInitSteps = steps; S.slotsInitVer = SLOTS_VER;
+          if (!S.routePick) S.routePick = R0;
+          // 备好之后**把活跃会话对齐到选中的线路**（否则 /state 会出现"routePick=thu 而 sessId 还是 paratera 那个会话"的矛盾）
+          const pk = await pickRoute(S.routePick, 'slots-init');
+          if (pk && pk.ok) steps.push('active-aligned:' + String(pk.route));
+          await saveState();
+          console.log('[cf] 双会话就位：%s', steps.join(' / '));
+        } catch (e) { noteError('slots-init', e) } finally { S.slotsInitBusy = false }
+      };
+
+      // A10（2026-09-20 审计 H07）：**进入触发入口就占互斥锁**。
+      //   旧版只查 `S.busy`，而 `S.busy` 要到 `fireRound` 末尾才置起 —— 中间隔着探测网络、
+      //   选会话、读事件、入队（探针实测并发两次 triggerRound ⇒ dispatch 2 次）。
+      //   锁放在最外层（手动 / 自动 / 菜单三条路都经过它），异常一律在 finally 释放；
+      //   真正的逻辑挪进 `triggerRoundInner`，好让 try/finally 只包一层。
+      const triggerRound = async (reason, opts) => {
+        const sc0 = ctx.get('sessionController');
+        if (!sc0) return { ok: false, error: '没有 sessionController' };
+        if (S.busy) return { ok: false, error: '上一轮还在跑', busy: true, note: S.note };
+        if (S.triggering) return { ok: false, error: '另一轮触发正在进行中（入口互斥锁已占用）', busy: true, note: S.note };
+        S.triggering = { at: Date.now(), reason: String(reason || '') };
+        try {
+          return await triggerRoundInner(reason, opts);
+        } finally {
+          S.triggering = null;
+        }
+      };
+      const triggerRoundInner = async (reason, opts) => {
+        const sc = ctx.get('sessionController');
+        if (!sc) return { ok: false, error: '没有 sessionController' };
+        const o = opts || {};
+        // 【2026-09-17 用户要求：侧栏「获取」下拉里点了哪条线路，就现场探哪条】
+        //   通了才触发；**不通就直接回失败**（前端把按钮闪成红底白字「获取失败」），
+        //   **绝不写 `lastCollectAt`/`collectDay`** ⇒ 上次采集时间保持原样（这正是用户要的语义）。
+        //   注意：这条路**不看 gwPolicy**（用户已经明确选了线路，不再替他决定花不花钱）。
+        if (o.probeRoute) {
+          const only = (String(o.probeRoute) === String(R1)) ? R1 : R0;
+          const pr0 = await pluginProbe(only);
+          if (!pr0.ok) {
+            S.gwDownAt = Date.now();
+            S.gwDownReason = String(pr0.err || ('HTTP ' + pr0.status) || 'probe-failed');
+            S.note = '探测 ' + only + ' 不通 ⇒ 这一轮没跑（' + cstHM() + '，采集时间未改）';
+            await saveState();
+            return { ok: false, routeDown: true, route: only, probe: pr0, note: S.note,
+                     error: '线路 ' + String(only || target) + ' 探测不通'
+                            + (pr0.err ? '（' + pr0.err + '）' : pr0.status ? '（HTTP ' + pr0.status + '）' : '')
+                            + ' ⇒ 没跑这一轮，上次采集时间不变' };
+          }
+          const pickM = await pickRoute(only, 'menu:' + only);
+          if (!pickM || !pickM.ok) return { ok: false, error: (pickM && pickM.error) || '选会话失败', probe: pr0 };
+          return await fireRound(sc, reason, pickM, String(o.forceMode || 'full'), pr0);
+        }
+        // **双会话：唤醒前先探 THU，再选中该用的那个会话**（2026-09-17 用户定案；不再用会话内 selectModel 换供应商）
+        const probeRes = o.forceRoute ? { at: Date.now(), ok: (String(o.forceRoute) === String(R0)), status: 0, ms: 0, err: 'manual-force', route: o.forceRoute } : await pluginProbe();
+        let mode = String(o.forceMode || 'full');         // 'full' | 'pipeline'
+        if (!probeRes.ok) {
+          // **网关不通**：按面板策略处理（用户 2026-09-17 定：默认「不跑」）。
+          //   注意**不再弹 question 卡片** —— 那类卡片只在"提问那条会话"的输入框里，后台会话你看不到，
+          //   而且"问"本身就得先唤醒付费会话；所以**自动**触发那一轮按 `gwPolicy` 处理（默认不跑）。
+          const pol = String(S.gwPolicy || 'skip');
+          S.gwDownAt = Date.now();
+          S.gwDownReason = String(probeRes.err || ('HTTP ' + probeRes.status) || 'probe-failed');
+          S.routeNeedsConfirm = false;                    // 保留字段但不再用于"问他"
+          if (pol === 'skip' && !o.forceRoute) {
+            S.note = '网关不通 ⇒ 按策略未跑（' + cstDay() + '）';
+            await saveState();
+            // 带上人话的 error：面板（ui.js）把 ok:false 当失败、会读 r.error 显示出来
+            return { ok: false, skipped: true, reason: 'gateway-down', policy: pol, probe: probeRes, note: S.note,
+                     error: '线路不通 ⇒ 按策略「不通则不跑」没有跑这一轮（可用侧栏「获取」下拉换一条线路手动跑）' };
+          }
+          mode = (pol === 'pipeline' && !o.forceMode) ? 'pipeline' : mode;
+          const pick2 = await pickRoute(R1, 'gw-down:' + pol + (o.forceRoute ? ':manual' : ''));
+          if (!pick2 || !pick2.ok) return { ok: false, error: (pick2 && pick2.error) || '切付费会话失败', probe: probeRes };
+          return await fireRound(sc, reason, pick2, mode, probeRes);
+        }
+        // A27（2026-09-25）：这句 why 原先**写死"THU"** —— 探的却是 `probeRes.route`。
+        //   于是探 paratera 成功时会报 `routeWhy = "probe:THU 可达"`，而 `routePick = paratera`
+        //   ⇒ 自证字段当场说谎（实测 2026-09-25 /state：routePick=paratera、routeWhy="probe:THU 可达"）。
+        //   现按**实际探的那条线**报，并配 H23 探针。
+        const pick = await pickRoute(probeRes.route, 'probe:' + probeRes.route + (probeRes.ok ? ' 可达' : ' 不通(' + (probeRes.err || probeRes.status) + ')'));
+        if (!pick || !pick.ok) return { ok: false, error: (pick && pick.error) || '选会话失败', steps: pick && pick.steps };
+        return await fireRound(sc, reason, pick, mode, probeRes);
+      };
+      // 真正把提示词发出去（两条路径共用）
+      const fireRound = async (sc, reason, pick, mode, probeRes) => {
+        const date = cstDay();
+        const base = await turnEnds(sc);                 // 触发前的 turn/end 计数 = 基线
+        try {
+          await sc.prompt({ requestId: 'collect-' + Date.now(), sessionId: S.sessionId, mode: 'queue',
+                            content: [{ type: 'text', text: roundPrompt(date, reason, S.lastCollectAt || 0, mode) }] }, FAKE_SIGNAL);
+        } catch (e) { noteError('collect-prompt', e); return { ok: false, error: String((e && e.message) || e) } }
+        S.busy = true; S.busySince = Date.now(); S.busyBase = base;
+        // **记下这一轮到底发进了哪个会话**（2026-09-17 晚加）：这一轮跑起来之后 `S.sessionId` 有可能被
+        //   `ensureSession` 换掉（那次"两个主 agent"事故就是这么发生的），而 checkBusy 原来只看 S.sessionId
+        //   ⇒ 换了会话就永远收不了尾（busy 卡到 3 小时超时，面板一直"采集中…"、获取被"上一轮还在跑"挡住）。
+        S.busyFor = String(S.sessionId || ''); S.busySawOpen = false;
+        S.retryCount = 0; S.lastRetryAt = 0;                // 新一轮 ⇒ 续跑计数归零
+        // A04（2026-09-20 审计 H06）：**这里绝不推进采集游标**。
+        //   旧版在这里写 `S.lastCollectAt = Date.now(); S.collectDay = date;` —— 而此刻只是
+        //   "提示词入队成功"，取数还没跑、面板还没被回写。中断/取数失败/没交付都会留下
+        //   一个**再也不会被覆盖的空洞**（下一轮从"入队时刻"开始取数）。
+        //   现在只记"已请求、未交付"；游标由 `commitCursor()` 在**面板真被回写**时提交。
+        S.pendingCollect = { day: date, at: Date.now(), sessionId: String(S.sessionId || ''),
+                             reason: String(reason || ''), mode: String(mode || '') };
+        // A22：新一轮开始 ⇒ 上一轮那个没人回答的提问作废（它属于上一轮，不该继续在面板上挂着）
+        S.pendingAsk = null;
+        S.gwRunAt = Date.now(); S.gwRunMode = mode;
+        S.note = '已触发 ' + date + ' 一轮（' + (reason === 'auto' ? '自动' : '手动') + '，' + S.routePick + '，mode=' + mode
+               + '）；**采集游标等交付成功才前移**';
+        await saveState();
+        return { ok: true, date, reason, route: S.routePick, mode: mode, sessionId: S.sessionId,
+                 steps: (pick && pick.steps) || [], probe: probeRes, note: S.note };
+      };
+
+      // ---- 上下文用量探测（2026-09-15 晚新增；判据全部来自会话事件，不猜）----
+      //   · 真实窗口：`request/context` 事件带 `contextWindow`（DSH SessionEventMap 里的类型）
+      //   · 当前用量：最新一条 `assistant/message` 的 `usage`（inputTokens = 这次请求带进去的上下文）
+      //   · 有没有 turn 正在跑：最后一个 turn 只有 start 没有 end ⇒ 正在干活
+      const ctxProbe = async (sc) => {
+        try {
+          const ins = await sc.inspect(S.sessionId, FAKE_SIGNAL);
+          const evs = (ins && ins.events) || [];
+          let win = 0, tokens = 0, turn = -1, lastTurn = -1, usageSeen = 0;
+          const ended = {};
+          for (let i = 0; i < evs.length; i++) {
+            const e = evs[i]; if (!e || !e.data) continue;
+            if (e.type === 'turn/start') lastTurn = Math.max(lastTurn, Number(e.data.turn) || 0);
+            if (e.type === 'turn/end') { const t = Number(e.data.turn) || 0; ended[t] = true; lastTurn = Math.max(lastTurn, t) }
+            if (e.type === 'request/context' && Number(e.data.contextWindow) > 0) win = Number(e.data.contextWindow);
+            if (e.type === 'assistant/message' && e.data.usage && typeof e.data.usage === 'object') usageSeen++;
+          }
+          for (let i = evs.length - 1; i >= 0; i--) {
+            const e = evs[i]; if (!e || e.type !== 'assistant/message' || !e.data) continue;
+            const u = e.data.usage; if (!u || typeof u !== 'object') continue;
+            // ⚠ 单位必须取 **totalTokens**，不能取 inputTokens+outputTokens（2026-09-15 实测踩到）：
+            //   缓存命中的上下文**不算进 inputTokens** —— 实测爆掉那次会话最后一条是
+            //   `{inputTokens:258, outputTokens:682, totalTokens:797100, cacheReadTokens:796160}`，
+            //   按 input+output 会算出 940（0.09% 占用），而真实占用是 **79.7%**。
+            //   所以：优先 totalTokens；拿不到时按 input+cacheRead+output 补算。
+            const inp = Number(u.inputTokens), out = Number(u.outputTokens);
+            const tot = Number(u.totalTokens), cac = Number(u.cacheReadTokens);
+            const sum = (Number.isFinite(inp) ? inp : 0) + (Number.isFinite(cac) ? cac : 0)
+                      + (Number.isFinite(out) ? out : 0);
+            const t = (Number.isFinite(tot) && tot > 0) ? tot : (sum > 0 ? sum : 0);
+            if (t > 0) { tokens = t; turn = Number(e.data.turn) || 0; break }
+          }
+          return { window: win, tokens, turn, lastTurn, open: lastTurn >= 0 && !ended[lastTurn],
+                   events: evs.length, usageSeen };
+        } catch (e) { return { err: String((e && e.message) || e), events: 0 } }
+      };
+
+      // 回合结束后（或空闲时）检查一次：超阈值就自动刷新会话。
+      //   **绝不打断在跑的活**：busy / open turn / 同一轮已刷过 / 冷却期内 → 只记数不动作。
+      const checkCtx = async (when) => {
+        if (!S.ctxAuto || S.ctxChecking) return null;
+        if (S.busy) { S.ctxSkips = (S.ctxSkips || 0) + 1; return null }
+        const sc = ctx.get('sessionController');
+        if (!sc || !sc.inspect || !S.sessionId) return null;
+        // 空闲路径节流（回合结束那次不节流）：inspect 是整会话读回，别每 30 秒来一次
+        if (when === 'idle-tick' && S.ctxLastProbeAt && Date.now() - S.ctxLastProbeAt < S.ctxIdleIntervalMs) return null;
+        S.ctxChecking = true;
+        try {
+          S.ctxLastProbeAt = Date.now();
+          const p = await ctxProbe(sc);
+          if (p.err) { noteError('ctx-probe', p.err); return null }
+          if (!p.tokens) return null;
+          S.ctxTokens = p.tokens; S.ctxWindow = p.window || 0; S.ctxChecks = (S.ctxChecks || 0) + 1;
+          // 阈值按**当前会话实际所在的线路**取（不是按 routePick）：THU 用 ctxRatioThu（**0.7**，见上面的注释：
+          //   0.9 会越过 DSH 的压缩线 0.8 ⇒ 死参数），paratera 用 ctxRatio
+          const _ratio = ctxRatioOf(routeOfActive());
+          S.ctxLimit = p.window > 0 ? Math.floor(p.window * _ratio) : S.ctxFallback;
+          S.ctxPct = S.ctxLimit > 0 ? Math.round(p.tokens * 1000 / S.ctxLimit) / 10 : 0;
+          if (p.open) { S.ctxSkips = (S.ctxSkips || 0) + 1; await saveState(); return null }
+          if (p.tokens < S.ctxLimit) { await saveState(); return null }
+          if (p.turn === S.ctxLastRotateTurn) { S.ctxSkips = (S.ctxSkips || 0) + 1; await saveState(); return null }
+          if (S.ctxLastRotateAt && Date.now() - S.ctxLastRotateAt < S.ctxCooldownMs) {
+            S.ctxSkips = (S.ctxSkips || 0) + 1; await saveState(); return null;
+          }
+          S.ctxLastRotateTurn = p.turn; S.ctxLastRotateAt = Date.now();
+          const why = 'ctx ' + S.ctxTokens + '/' + S.ctxLimit + ' (' + S.ctxPct + '%, ' + when + ')';
+          await saveState();
+          const r = await rotateSession(why);
+          if (r && r.ok) S.ctxRotations = (S.ctxRotations || 0) + 1;
+          // A23（2026-09-25）：**把轮换的步骤落盘**。旧版只把 `steps` 当返回值，而定时轮换是后台路径
+          //   （`checkCtx` 的返回值被丢掉）⇒ 事后**无法判断**它到底归档了谁、`archiveSession` 有没有报错。
+          //   实测代价：用户问"为什么多了一堆主 agent"，我只能推断到"轮换造的"，查不出那两次为什么没归档。
+          S.ctxLastRotateWhy = String(why).slice(0, 160);
+          S.ctxLastRotateOk = !!(r && r.ok);
+          S.ctxLastRotateArchived = String((r && r.archived) || '');
+          S.ctxLastRotateErr = String((r && r.error) || '');
+          S.ctxLastRotateSteps = (r && Array.isArray(r.steps))
+            ? r.steps.slice(0, 24).map((x) => String(x).slice(0, 90))
+            : ['err:' + String((r && r.error) || 'no-steps')];
+          await saveState();
+          return r;
+        } finally { S.ctxChecking = false }
+      };
+
+      // busy 收尾：轮询主 agent 会话的 turn/end 计数，多了一次就说明这一轮结束了。
+      // （不用 ctx.on('api-session/status')：动态插件的 ctx.on 订阅不到宿主事件——历史实测，见 DEV_NOTES）
+      const checkBusy = async () => {
+        if (!S.busy) return;
+        const sc = ctx.get('sessionController'); if (!sc) return;
+        // 认"这一轮真正发进去的那个会话"（`busyFor`），没有才退回 `S.sessionId`（老状态）
+        const sid = String(S.busyFor || S.sessionId || '');
+        if (!sid) return;
+        const st = await turnState(sc, sid);
+        if (st === null) return;
+        // A22：**主 agent 在等你回答**（有未回答的 `ask_user_question`）⇒ 记进 `S.pendingAsk`，
+        //   由 `/state` 与面板显示。没有这一条，用户在自动轮里**完全不知道它在等**（2026-09-21 的实况）。
+        //   解析器就地写（探针只 exec 本函数的切片，外面的名字在它作用域里不存在）。
+        if (st.ask) {
+          if (!S.pendingAsk || S.pendingAsk.callId !== st.ask.callId) {
+            S.pendingAsk = { callId: st.ask.callId, at: Number(st.ask.at) || Date.now(),
+                             questions: Array.isArray(st.ask.questions) ? st.ask.questions : [], stale: false };
+            S.note = '主 agent 在等你回答一个问题（' + cstHM() + '）—— 去那条会话回答它，这一轮才会继续';
+            await saveState();
+          }
+        } else if (S.pendingAsk && !S.pendingAsk.stale) {
+          S.pendingAsk = null;                            // 已回答（或新一轮开始了）
+        }
+        if (st.open) S.busySawOpen = true;                  // 看到过"正在干活"
+        const done = st.open ? false
+          : (S.busySawOpen ? true                            // 看到过 open、现在不 open ⇒ 收尾（重启后也能收）
+            : (S.busyFor ? st.ends > (Number(S.busyBase) || 0) // 老判据：turn/end 计数变大了
+              : true));                                      // 老状态里没有 busyFor 且没在跑 ⇒ 直接收尾，别卡满 3 小时
+        if (done) {
+          // A05（2026-09-20 审计 H01）：**先把"这一轮的身份"取出来，再清 busyFor**。
+          //   旧版顺序是先 `S.busyFor = ''`、再 `if (abn && ... && S.busyFor)` —— 条件永远为假，
+          //   续跑分支**根本进不去**（探针实测注入次数 0，期望 1）。这个 bug 从加续跑那天起就在。
+          const roundSid = String(S.busyFor || '');
+          S.busy = false; S.busyBase = null; S.busyFor = ''; S.busySawOpen = false; S.lastDoneAt = Date.now();
+          // **异常退出 ⇒ 自动续跑**（2026-09-17 用户要求："遇到这种情况你要自动让他继续，检测到他异常退出就说'继续'"）：
+          //   判据＝这一轮所在会话**最后一个 turn 的结束原因不是 `completed`**（实测网络断流是
+          //   `{kind:'error',error:{code:'TRANSPORT',message:'Stream ended without finish_reason'}}`）。
+          //   做法＝往**同一个会话**（`sid`，不一定是 S.sessionId）注入一句「继续」，并把 busy 重新置起，
+          //   于是它接着跑、也仍然会被这里收尾 ⇒ 连续失败会被重试上限挡住（见 autoRetry）。
+          //   **只对 `error` 续跑，绝不对 `aborted` 续跑** —— 用户手动点「停止生成」的语义就是"别跑了"，
+          //   自动说「继续」等于跟他对着干。
+          //   **只对"我们自己触发的那一轮"续跑**（`S.busyFor` 非空）：否则会把一条被停掉的旁支会话又"续"活。
+          const abn = (st.lastReason === 'error') ? st.lastReason : '';
+          if (abn && S.autoRetry !== false && roundSid) {
+            const tries = Number(S.retryCount || 0) + 1;
+            if (tries <= 3) {
+              S.retryCount = tries; S.lastRetryAt = Date.now();
+              try {
+                const base2 = await turnEnds(sc, sid);
+                await sc.prompt({ requestId: 'retry-' + Date.now(), sessionId: sid, mode: 'queue',
+                                  content: [{ type: 'text', text: '继续' }] }, FAKE_SIGNAL);
+                S.busy = true; S.busySince = Date.now(); S.busyBase = base2;
+                S.busyFor = sid; S.busySawOpen = false;
+                S.note = '上一轮异常结束（' + abn + '）⇒ 已自动续跑（第 ' + tries + ' 次，' + cstHM() + '）';
+                await saveState();
+                return;
+              } catch (e) { noteError('auto-retry', e) }
+            } else {
+              S.note = '上一轮异常结束（' + abn + '）且已自动续跑 ' + S.retryCount + ' 次，先停下（' + cstHM() + '）';
+              await saveState();
+              return;
+            }
+          }
+          S.note = '上一轮已结束（' + cstHM() + '）' + (st.lastReason ? '［' + st.lastReason + '］' : '')
+                 + (S.pendingAsk ? '，且**有一个提问没被回答**' : '');
+          if (S.pendingAsk) S.pendingAsk.stale = true;     // 回合已结束 ⇒ 这个提问已经作废，但**留着给人看**
+          await saveState();
+          S.retryCount = 0;                       // 正常跑完 ⇒ 续跑计数归零（下一轮从 0 开始）
+          // 回合刚结束 = 自动刷新的最佳时机（此刻没有在跑的活，不会打断）
+          checkCtx('turn-end').catch((e) => noteError('ctx-check', e));
+        } else if (S.busySince && Date.now() - S.busySince > 3 * 3600 * 1000) {
+          S.busy = false; S.busyBase = null; S.busyFor = ''; S.busySawOpen = false;
+          S.note = '上一轮状态超时（>3h）已复位'; await saveState();
+        }
+      };
+
+      // 自动：每 30 秒看一眼 CST 时间。到点、且"今天还没采集过"就触发；
+      // 重启后过了 autoTime 才打开页面也会补触发（**一天只跑一次**，去重只认 autoFiredDay）
+      try {
+        const offTick = timerSvc.interval(() => {
+          try {
+            checkBusy();
+            // 空闲时也看一眼上下文（慢路径：能兜住"重启前就已经很满"的会话；
+            // 真正干活时 busy/open-turn 两道刹车会拦住，不会打断）
+            if (!S.busy) checkCtx('idle-tick').catch((e) => noteError('ctx-check', e));
+            // A23：定期扫"多出来的同标题主 agent"（5 分钟一次；`typeof` 兜底是因为审计探针
+            //   只 exec 本函数这一段，作用域里没有 scanExtraMains）
+            if (typeof scanExtraMains === 'function' && (!S.extraMainsAt || Date.now() - S.extraMainsAt > 5 * 60 * 1000)) {
+              scanExtraMains();
+            }
+            // **每一次 tick 都写下"为什么没跑"**（`S.autoWhy` 会在 `/state` 里回显）——
+            //   2026-09-21 用户报「启用了自动今天却没有自动」，当时**没有任何一处能看出原因**。
+            // A21（2026-09-22 用户问"为什么昨天还是没有自动获取"）：**上一轮"请求过但没交付" ⇒ 补跑**。
+            //   2026-09-21 23:30 那轮死在"提问没人回答"上（见 A22）：`pendingCollect` 一直挂着、游标不前移
+            //   （A04 的设计是对的），但**没有任何东西会把它接上** ⇒ 整晚白跑、第二天什么都没有。
+            //   条件：距请求 ≥10 分钟、3 天以内、最多 3 次（`resumeCount`，**交付成功才归零**）。
+            //   注意它**不看 `S.auto`** —— 这是"把已经请求过的那一轮做完"，不是"新起一轮"。
+            if (!S.busy && S.pendingCollect && S.pendingCollect.day) {
+              const ageMs = Date.now() - (Number(S.pendingCollect.at) || 0);
+              const tries = Number(S.resumeCount || 0);
+              if (ageMs > 10 * 60 * 1000 && ageMs < 3 * 24 * 3600 * 1000 && tries < 3) {
+                S.resumeCount = tries + 1;
+                S.autoWhy = '补跑未交付的 ' + S.pendingCollect.day + ' 一轮（第 ' + S.resumeCount + ' 次）';
+                S.note = S.autoWhy;
+                saveState();
+                triggerRound('resume').catch((e) => noteError('resume-trigger', e));
+                return;
+              }
+            }
+            if (!S.auto) { S.autoWhy = '自动未开启'; return; }
+            if (S.busy) { S.autoWhy = '上一轮还在跑（busy）'; return; }
+            const day = cstDay(), hm = cstHM();
+            // A19（2026-09-21 用户报"启用了自动今天却没有自动"）：**判据里不能有 `collectDay`**。
+            //   实测根因：09-20 凌晨 01:11 有一轮（手工/菜单）把 `collectDay` 写成 `2026-09-20`，
+            //   而 `collectDay` 的语义是**"上次采到哪天"（游标）**，不是"今天自动跑过没" ——
+            //   于是当晚 23:30 的 tick 命中 `S.collectDay === day` 直接跳过：
+            //   `autoFiredDay` 始终为空、服务器 21:20 起一直活着、23:30 那一轮从没发生。
+            //   "今天自动跑过没"**只有一个判据：`autoFiredDay`**。
+            if (S.autoFiredDay === day) { S.autoWhy = '今天已自动跑过（autoFiredDay=' + day + '）'; return; }
+            if (hm < S.autoTime) { S.autoWhy = '未到点：现在 ' + hm + ' < autoTime ' + S.autoTime; return; }
+            S.autoWhy = '已触发（' + day + ' ' + hm + '，autoTime=' + S.autoTime + '）';
+            S.autoFiredDay = day; S.autoFiredAt = Date.now();
+            saveState();
+            triggerRound('auto').catch((e) => noteError('auto-trigger', e));
+          } catch (e) { noteError('auto-tick', e) }
+        }, 30000);
+        if (offTick) disposers.push(offTick);
+      } catch (e) { noteError('auto-interval', e) }
+
+      // 即时水合：apply 之后 S 还是默认值，而 /state 与自动调度都直接读 S
+      // （历史上只有 /ss、/chat、/tell 会 loadState → 插件一重建，面板先看到的是 demo 条目、
+      //  自动调度也拿不到 auto/autoTime。这里补一次 fire-and-forget 的载入）
+      try { loadState() } catch (e) { noteError('boot-loadState', e) }
+
+      // `/state?slim=1` → **瘦身投影**（2026-09-15 成本审计后加）：
+      //   为什么：39 条的**整表正文 ≈ 47 KB（≈2.3 万 token）**，而主 agent 每轮要读它好几次、回写一次
+      //   → 光"搬面板"就 ≈11 万 token/轮（实测 `/state` 整体 60,656 B）。
+      //   瘦身后只给 id/kind/urgency/done/isNew/date + **首行 60 字** + 正文长度 → ≈9 KB（省约 80%）。
+      //   **正文一个字都没删**：默认仍是全量（向后兼容），要正文就照旧不带参数。
+      const slimItem = (x) => ({
+        id: String(x.id || ''), kind: x.kind, urgency: x.urgency, done: !!x.done, isNew: !!x.isNew,
+        date: x.date, src: x.src, head: String(x.text || '').split('\n')[0].slice(0, 60),
+        len: String(x.text || '').length,
+      });
+      routeOk.state = route('GET', 'state', async (body, req) => {
+        const q = String((req && req.url) || '');
+        const slim = /[?&]slim=1(&|$)/.test(q);
+        // 双会话懒初始化：第一次被问 /state 就后台把两个会话备好（幂等、不阻塞本次响应；**带版本号**，改逻辑后会再跑一次）
+        if ((!S.slotsInitAt || Number(S.slotsInitVer || 1) < 3) && !S.slotsInitBusy) { try { ensureBothSlots() } catch (e) { noteError('slots-init-kick', e) } }
+        return {
+        auto: S.auto, autoTime: S.autoTime, busy: S.busy, lastCollectAt: S.lastCollectAt,
+        lastDoneAt: S.lastDoneAt, busySince: S.busySince, collectDay: S.collectDay, autoFiredDay: S.autoFiredDay,
+        // 「自动为什么没跑」的自证字段（2026-09-21 A19）：判据逐条可见，不必再读盘猜。
+        //   autoWhy＝最近一次 tick 的结论；autoRetry/retryCount/busyFor/pendingCollect 原先只在 state.json 里，
+        //   冷启动卡把它们列为"观测缺口"，一并补上。
+        autoWhy: S.autoWhy || '', autoRetry: S.autoRetry !== false, retryCount: Number(S.retryCount || 0),
+        busyFor: String(S.busyFor || ''), autoFiredAt: Number(S.autoFiredAt || 0),
+        pendingCollect: S.pendingCollect
+          ? { day: String(S.pendingCollect.day || ''), at: Number(S.pendingCollect.at || 0) } : null,
+        // A20：最近一次"用默认应用打开"的结果（点面板里的文件链接会走它）
+        lastOpenAt: Number(S.lastOpenAt || 0), lastOpenPath: String(S.lastOpenPath || ''),
+        lastOpenOk: (S.lastOpenOk === null || S.lastOpenOk === undefined) ? null : !!S.lastOpenOk,
+        lastOpenHow: String(S.lastOpenHow || ''),
+        // A21/A22：未交付轮的补跑计数 + **主 agent 正在等谁回答什么**（面板据此显示一条提示）
+        resumeCount: Number(S.resumeCount || 0),
+        pendingAsk: S.pendingAsk
+          ? { callId: String(S.pendingAsk.callId || ''), at: Number(S.pendingAsk.at || 0),
+              stale: !!S.pendingAsk.stale,
+              questions: Array.isArray(S.pendingAsk.questions) ? S.pendingAsk.questions : [] }
+          : null,
+        lastCount: S.lastCount, note: S.note, items: slim ? S.items.map(slimItem) : S.items,
+        // 瘦身模式**连 wakeText 也不回**：它 13 KB，而主 agent 的会话前缀里本来就有一份，每次轮询重发纯属浪费
+        itemsSlim: slim, sessionId: S.sessionId,
+        mainSessionId: S.mainSessionId,
+        seeded: S.seeded, wakeText: slim ? '' : WAKE_TEXT, wakeTextLen: WAKE_TEXT.length, lastError: S.lastError,
+        routeError: S.lastRouteError, saveOk: S.lastSaveOk,
+        quoteId: S.quote ? String(S.quote.id || '') : '',
+        quoteNo: S.quote ? String(S.quote.no || '') : '',
+        quoteText: S.quote ? String(S.quote.text || '') : '',
+        qdiag: S.qdiag || null,
+        panel: await panelView(),     // 面板自证（spec §2.3）：sections/count/unknownKinds/err 一并回显
+        // 上下文自动刷新（2026-09-15 晚）：配置 + 最近一次实测用量 + 计数，全部可见可自证
+        ctxAuto: S.ctxAuto, ctxRatio: S.ctxRatio, ctxFallback: S.ctxFallback, ctxCooldownMs: S.ctxCooldownMs,
+        ctxTokens: S.ctxTokens, ctxWindow: S.ctxWindow, ctxLimit: S.ctxLimit, ctxPct: S.ctxPct,
+        ctxChecks: S.ctxChecks, ctxSkips: S.ctxSkips, ctxRotations: S.ctxRotations,
+        // A23：**轮换留痕**（为什么轮换 / 归档了谁 / 有没有报错 / 逐条步骤）＋ **多出来的同标题主 agent**。
+        //   用户 2026-09-25 问"为什么多了一堆主agent"时，这两样东西**一样都没有**，只能靠翻 workspace.json 反推。
+        ctxLastRotateWhy: String(S.ctxLastRotateWhy || ''), ctxLastRotateOk: S.ctxLastRotateOk,
+        ctxLastRotateArchived: String(S.ctxLastRotateArchived || ''), ctxLastRotateErr: String(S.ctxLastRotateErr || ''),
+        ctxLastRotateSteps: Array.isArray(S.ctxLastRotateSteps) ? S.ctxLastRotateSteps : [],
+        extraMains: Array.isArray(S.extraMains) ? S.extraMains : [], extraMainsAt: Number(S.extraMainsAt || 0),
+        // 双会话自证（2026-09-17）：两个槽 + 当前选中的路线 + 插件侧探测结果 + THU 的刷新阈值
+        routePick: S.routePick || '', inbox: INBOX_DIR, routes: ROUTES.map(function (r) { return { id: r.id, label: r.label, menuName: r.menuName || '', hint: r.hint || '', 'default': !!r['default'] } }),
+    routeAt: S.routeAt || 0, routeWhy: S.routeWhy || '',
+        activeRoute: routeOfActive(),
+        sessThu: S.sessThu || '', sessParatera: S.sessParatera || '',
+        routeNeedsConfirm: !!S.routeNeedsConfirm, routeProbe: S.routeProbe || null,
+        // 网关不通时的策略与"最近一次因此没跑"的时刻（`gwPolicy` **只影响自动触发那一轮**；
+        //   2026-09-17 白天右栏那一栏已按用户要求删掉，「获取」改成选提供商的下拉）
+        gwPolicy: S.gwPolicy || 'skip', gwDownAt: S.gwDownAt || 0, gwDownReason: S.gwDownReason || '',
+        gwRunAt: S.gwRunAt || 0, gwRunMode: S.gwRunMode || '',
+        slotsInitAt: S.slotsInitAt || 0, slotsInitSteps: S.slotsInitSteps || [],
+        ctxRatioThu: (S.ctxRatioThu === undefined ? 0.7 : S.ctxRatioThu),
+        authUrl: authUrlFor(req),
+        };
+      });
+      routeOk.ss = route('POST', 'ss', async (body) => await ensureSession(!!(body && body.seed === true)));
+      routeOk.say = route('POST', 'say', async (body) => {
+        const sc = ctx.get('sessionController');
+        const text = String((body && body.text) || '').trim(), qt = String((body && body.quoteText) || '').trim();
+        if (!text && !qt) return { ok: false, error: '内容为空' };
+        // 2026-09-17 晚加：可**点名**对某条会话说（不传 sessionId 仍是老行为＝当前主会话）。
+        //   为什么需要：那一轮跑在 A 会话、而 `S.sessionId` 中途被换成了 B（"两个主 agent"那次），
+        //   这时要把「继续」送进 A 就只能点名 —— 自动续跑（见 checkBusy）也走这条。
+        const want = String((body && body.sessionId) || '');
+        if (!want) { const r = await ensureSession(false); if (!r.ok) return r }
+        const sid = want || String(S.sessionId || '');
+        if (!sid) return { ok: false, error: '没有目标会话' };
+        const content = qt ? ('引用这条：' + qt + '\n\n我的意见/修正：' + (text || '(未写具体意见)')) : text;   // 兼容旧前端：新链路走 /quote 注入
+        try { await sc.prompt({ requestId: 'say-' + Date.now(), sessionId: sid, mode: 'queue', content: [{ type: 'text', text: content }] }, FAKE_SIGNAL); return { ok: true, sessionId: sid } }
+        catch (e) { return { ok: false, error: String((e && e.message) || e) } }
+      });
+      routeOk.chat = route('GET', 'chat', async () => {
+        const sc = ctx.get('sessionController'); const r = await ensureSession(false); if (!r.ok) return r;
+        try {
+          const ins = await sc.inspect(S.sessionId, FAKE_SIGNAL); const evs = (ins && ins.events) || []; const out = [];
+          const pick = (m) => {
+            if (!m || (m.role !== 'user' && m.role !== 'assistant')) return;
+            let tx = '';
+            try { (m.content || []).forEach((c) => { if (c && c.type === 'text' && c.text) tx += (tx ? '\n' : '') + c.text }) } catch (e) {}
+            tx = String(tx).trim(); if (tx) out.push({ role: m.role, text: tx.slice(0, 6000) });
+          };
+          evs.forEach((e) => { if (!e || !e.data) return; if (e.type === 'agent/inbox/spliced') (e.data.inserted || []).forEach(pick); else if (e.data.message) pick(e.data.message) });
+          return { ok: true, count: out.length, messages: out.slice(-40) };
+        } catch (e) { return { ok: false, error: String((e && e.message) || e) } }
+      });
+      // 探针会把这一段单独 exec（作用域里没有外面的 ITEMS_MAX）⇒ 每处都用 typeof 兜底
+      // （`typeof` 对未声明的名字不抛，返回 'undefined'）。所以上限判据在两个 handler 里各写一次。
+      routeOk.items = route('POST', 'items', async (body) => {
+        const list = body && body.items;
+        if (!Array.isArray(list)) return { ok: false, error: 'items 必须是数组' };
+        const CAP = (typeof ITEMS_MAX === 'number') ? ITEMS_MAX : 300;
+        // A11（审计 H05）：**超上限就明确拒绝，不许静默 slice 丢条目**。
+        //   旧版 `list.slice(0, 300)` 之后照样回 `ok:true` —— 实测提交 301 条只剩 300 条、毫无提示。
+        if (list.length > CAP) return { ok: false, error: '条目数 ' + list.length + ' 超过上限 ' + CAP
+          + '，已拒绝整表替换（现有列表未改动）；请先合并或归档再回写', count: S.items.length, limit: CAP };
+        // 未知字段**原样透传**（2026-09-15，面板扩展 spec §2.2）：白名单里的字段强类型，
+        // 其余字段照抄（单条额外字段 ≤2KB），响应里回显收到过哪些 —— 让主 agent 能自证"我的新字段没被吃掉"。
+        const PROTECT = ['__proto__', 'constructor', 'prototype'];
+        const extraKeys = new Set(); let droppedFields = 0;
+        S.items = list.map((x, i) => {
+          const raw = x || {};
+          const out = {
+            id: String(raw.id || ('A' + (i + 1))), text: String(raw.text || ''),
+            kind: String(raw.kind || 'official'), urgency: String(raw.urgency || 'later'),
+            done: !!raw.done, src: String(raw.src || ''), date: String(raw.date || ''),
+            isNew: !!raw.isNew,   // 【新】标识：主 agent 追加新信息时置 true，下一轮自己清掉
+          };
+          for (const k of Object.keys(raw)) {
+            if (Object.prototype.hasOwnProperty.call(out, k) || PROTECT.indexOf(k) >= 0) continue;
+            let asJson; try { asJson = JSON.stringify(raw[k]) } catch (e) { droppedFields++; continue }
+            if (asJson === undefined || String(asJson).length > 2048) { droppedFields++; continue }
+            out[k] = raw[k]; extraKeys.add(k);
+          }
+          return out;
+        });
+        // A04（审计 H06）：**"交付成功"的判据** —— 主 agent 真的把**非空**条目回写进面板了。
+        //   只有这时才把"已请求、未交付"的采集窗口提交成已完成游标（`lastCollectAt`/`collectDay`）。
+        //   异常结束、用户中止、重启都不提交 ⇒ 未完成窗口会在下一轮被重新覆盖，不留空洞。
+        let committed = null;
+        if (S.pendingCollect && S.pendingCollect.day && S.items.length > 0) {
+          S.lastCollectAt = Number(S.pendingCollect.at) || Date.now();
+          S.collectDay = String(S.pendingCollect.day);
+          S.lastDoneAt = Date.now();
+          committed = String(S.pendingCollect.day);
+          S.pendingCollect = null;
+          S.resumeCount = 0;                       // A21：交付成功 ⇒ 补跑计数归零
+          S.pendingAsk = null;                     // A22：这一轮交付了，之前那个提问不再需要人回答
+        }
+        return { ok: true, count: S.items.length, persist: await saveState(),
+                 extraFields: Array.from(extraKeys), droppedFields, cursorCommitted: committed };
+      });
+      // 面板**按 id 打补丁**（2026-09-15 成本审计后加）：`{upsert:[{id,...}], drop:[id], order:[id], clearNew:bool}`
+      //   为什么：整表回写要把 39 条正文全发一遍（≈47 KB），而主 agent 每轮其实只动 2~5 条。
+      //   语义（**以服务端当前表为底，保护用户的勾选**）：
+      //     · upsert 按 id 覆盖**提供了的字段** —— **没给的字段原样保留**，所以漏传 done 不会把他勾的抹掉；
+      //       新 id 会追加（默认 isNew=true，除非显式给 false）。
+      //     · drop 只删**列出的** id；order 给出期望顺序（没提到的排到最后，保持相对次序）。
+      //     · 响应回显 added/changed/dropped/done/isNew/extraFields，便于主 agent 自证"我改的生效了没"。
+      routeOk.itemsPatch = route('POST', 'items-patch', async (body) => {
+        const bb = body || {};
+        const ups = Array.isArray(bb.upsert) ? bb.upsert : [];
+        const drops = new Set((Array.isArray(bb.drop) ? bb.drop : []).map(String));
+        const PROTECT = ['__proto__', 'constructor', 'prototype'];
+        const cur = S.items.map((x) => ({ ...x }));
+        const byId = new Map(cur.map((x) => [String(x.id), x]));
+        const extraKeys = new Set();
+        let added = 0, changed = 0;
+        for (const raw of ups) {
+          if (!raw || typeof raw !== 'object') continue;
+          const id = String(raw.id || '');
+          if (!id) continue;
+          const prev = byId.get(id);
+          if (prev) {
+            for (const k of Object.keys(raw)) {
+              if (PROTECT.indexOf(k) >= 0 || k === 'id') continue;
+              if (!(k in prev)) extraKeys.add(k);
+              prev[k] = raw[k];
+            }
+            changed += 1;
+          } else {
+            const out = {
+              id, text: String(raw.text || ''), kind: String(raw.kind || 'official'),
+              urgency: String(raw.urgency || 'later'), done: !!raw.done, src: String(raw.src || ''),
+              date: String(raw.date || ''), isNew: raw.isNew === undefined ? true : !!raw.isNew,
+            };
+            for (const k of Object.keys(raw)) {
+              if (PROTECT.indexOf(k) >= 0 || (k in out)) continue;
+              out[k] = raw[k]; extraKeys.add(k);
+            }
+            byId.set(id, out);
+            added += 1;
+          }
+        }
+        let list = S.items.map((x) => byId.get(String(x.id))).filter((x) => x && !drops.has(String(x.id)));
+        const seen = new Set(list.map((x) => String(x.id)));
+        byId.forEach((v, k) => { if (!seen.has(k) && !drops.has(k)) list.push(v) });
+        if (Array.isArray(bb.order) && bb.order.length) {
+          const rank = new Map(bb.order.map((id, i) => [String(id), i]));
+          list.sort((x, y) => (rank.has(String(x.id)) ? rank.get(String(x.id)) : 1e6)
+                            - (rank.has(String(y.id)) ? rank.get(String(y.id)) : 1e6));
+        }
+        if (bb.clearNew === true) list = list.map((x) => ({ ...x, isNew: false }));
+        const CAP2 = (typeof ITEMS_MAX === 'number') ? ITEMS_MAX : 300;
+        // A11：patch 与整表替换**同一判据**（旧版这里也是静默 slice）。
+        if (list.length > CAP2) return { ok: false, error: '打补丁后条目数 ' + list.length + ' 超过上限 ' + CAP2
+          + '，已拒绝本次补丁（现有列表未改动）', count: S.items.length, limit: CAP2 };
+        S.items = list;
+        // A04：交付成功（补丁后仍非空）才提交采集游标 —— 与 /items 同一判据。
+        let committed = null;
+        if (S.pendingCollect && S.pendingCollect.day && S.items.length > 0) {
+          S.lastCollectAt = Number(S.pendingCollect.at) || Date.now();
+          S.collectDay = String(S.pendingCollect.day);
+          S.lastDoneAt = Date.now();
+          committed = String(S.pendingCollect.day);
+          S.pendingCollect = null;
+          S.resumeCount = 0;                       // A21：交付成功 ⇒ 补跑计数归零
+          S.pendingAsk = null;                     // A22：这一轮交付了，之前那个提问不再需要人回答
+        }
+        // A07（审计 H03）：**持久化结果必须真实回传**。旧版这里写死 `persist: 'saved'`，
+        //   于是 saveState 失败（磁盘满/权限/路径没了）时接口照样报 saved。
+        const pr = await saveState();
+        return {
+          ok: true, count: S.items.length, added: added, changed: changed,
+          dropped: cur.length + added - S.items.length, extraFields: Array.from(extraKeys),
+          done: S.items.filter((x) => x.done).length, isNew: S.items.filter((x) => x.isNew).length,
+          persist: pr, cursorCommitted: committed,
+        };
+      });
+      routeOk.item = route('POST', 'item', async (body) => {
+        const a = body && body.action, id = body && body.id;
+        const it = S.items.find((x) => x.id === id);
+        if (a === 'toggle' && it) { it.done = !it.done; return { ok: true, persist: await saveState() } }
+        if (a === 'delete') { S.items = S.items.filter((x) => x.id !== id); return { ok: true, persist: await saveState() } }
+        if (a === 'clear-done') { S.items = S.items.filter((x) => !x.done); return { ok: true, persist: await saveState() } }
+        return { ok: false, error: '未知 action' };
+      });
+      routeOk.tell = route('POST', 'tell', async () => {
+        const sc = ctx.get('sessionController');
+        if (!sc) return { ok: false, error: 'sessionController 不可用' };
+        const steps = ['load:' + (await loadState())];
+        if (!S.sessionId) return { ok: true, sessionId: '', blank: false, exists: false, steps };
+        const sum = await sessionSummary(sc, S.sessionId);
+        const exists = !!(sum && sum.sessionId);
+        const blank = !!(sum && sum.blank === true);
+        steps.push(exists ? (blank ? 'tell:blank' : 'tell:ok') : 'tell:missing');
+        return { ok: true, sessionId: S.sessionId, exists, blank, steps };
+      });
+      routeOk.quote = route('POST', 'quote', async (body) => {
+        const b = body || {};
+        if (b.clear === true) { S.quote = null; return { ok: true, quote: null, cleared: true } }
+        const text = String(b.text || '').trim();
+        if (text) {
+          // 记下"这条引用是给哪个会话的"。**必须拿到一个明确的 id**：注入段是硬闸门
+          // （scope.id === quote.for），空着就永远注入不进去（2026-09-15 实测）。
+          const forId = await ensureQuoteTarget();
+          S.quote = { id: String(b.id || ''), no: String(b.no || ''), text: text, for: String(forId || '') };
+          if (!forId) S.lastRouteError = '引用登记时还没定位到主 agent 会话：这条引用会被拒绝注入（不会串会话）';
+          else S.lastRouteError = '';
+        }
+        return { ok: true, quote: S.quote ? { id: S.quote.id, no: S.quote.no, for: String(S.quote.for || '').slice(0, 12) } : null };
+      });
+      // 「刷新会话」的**唯一实现**（2026-09-15 晚从 /rotate 路由里抽出来，好让"上下文超阈值自动刷新"复用同一段）：
+      //   归档当前主 agent 会话 → 在"聊天摘要"工作区新建 → rebase 锚点 → 改名 → 灌唤醒文案 → persist
+      //    必须建在"聊天摘要"工作区里：不带 workspaceId 建出来的会话是游离的
+      //   （成员表里没有它 → 侧栏不出现，而且 /ss 会把它判成 stale:not-in-workspace）。
+      //   ⚠ 这个动作**不是幂等**的（每调一次就多一个会话）→ 上层重试前必须想清楚（cf_api 已把 rotate 排到"不重试"）。
+      const rotateSession = async (reason, explicitOldId) => {
+        const sc = ctx.get('sessionController'), wc = ctx.get('workspaceController');
+        if (!sc || !sc.create) return { ok: false, error: 'sessionController 不可用' };
+        const steps = ['why:' + String(reason || 'manual'), 'load:' + (await loadState())];
+        const oldId = String(explicitOldId || S.sessionId || '');
+        try { if (oldId) await wc.create({ path: AGENT_CWD }) } catch (e) {}
+        if (oldId) {
+          try { await wc.archiveSession({ sessionId: oldId }); steps.push('archived:' + oldId.slice(0, 12)) }
+          catch (e) { steps.push('archive-err:' + String((e && e.message) || e)) }
+        } else steps.push('archived:none');
+        if (oldId && String(S.sessionId) === oldId) S.sessionId = '';   // 别再把刚归档的认领回来
+        S.seeded = false; S.seededFor = ''; S.qdiag = null; S.quote = null;
+        let createdId = '';
+        let wsIdForCreate = '';
+        try {
+          const wm = await wc.create({ path: AGENT_CWD });
+          wsIdForCreate = String(((wm || {}).workspace || {}).workspaceId || '');
+          steps.push('ws:' + (wsIdForCreate ? 'ok' : 'none'));
+        } catch (e) { steps.push('ws:err') }
+        try {
+          const made = await createSession(sc, wsIdForCreate ? { workspaceId: wsIdForCreate } : { cwd: AGENT_CWD }, steps);
+          createdId = made && made.sessionId ? String(made.sessionId) : '';
+          if (!createdId) return { ok: false, error: 'create 未返回 id', steps };
+          steps.push('created:' + createdId.slice(0, 12));
+        } catch (e) { return { ok: false, error: 'create 失败：' + String((e && e.message) || e), steps } }
+        S.sessionId = createdId;
+        S.mainSessionId = createdId;                                   // 锚点 rebase 到新会话
+        // A23（2026-09-25 用户问"为什么多了一堆主agent"）：**把指向旧会话的槽一起 rebase**。
+        //   旧版只 rebase 了 `sessionId` / `mainSessionId`，槽没管 ⇒ `sessParatera` 会一直指着
+        //   **刚被上一行归档**的那条会话（实测 09-24 23:35 那次：`sessParatera=<示例>` 已进归档表，
+        //   而当前主会话是新建的 `6c03167e`）⇒ 下一轮 `ensureRouteSession` 判槽死、槽清空、按标题又找不到，
+        //   于是**再建一个**带后缀标题的新会话，侧栏里越堆越多。
+        ROUTES.map(function (r, i) { return [i === 0 ? 'sessThu' : 'sessParatera', r.id] }).forEach((kv) => {
+          if (oldId && String(S[kv[0]] || '') === String(oldId)) {
+            S[kv[0]] = createdId; steps.push('slot-rebase:' + kv[1]);
+          }
+        });
+        retargetQuote([oldId], createdId, steps);                       // 待发引用跟着新会话走（原目标已归档）
+        try { if (sc.resolveAgent) await sc.resolveAgent(createdId) } catch (e) {}
+        try { await sc.rename({ sessionId: createdId, title: SESSION_TITLE }); S.renamedAs = SESSION_TITLE; steps.push('rename:ok') } catch (e) { steps.push('rename:err') }
+        try {
+          await sc.prompt({ requestId: 'rotate-seed-' + Date.now(), sessionId: createdId, mode: 'queue', content: [{ type: 'text', text: WAKE_TEXT }] }, FAKE_SIGNAL);
+          S.seeded = true; S.seededFor = createdId; steps.push('wake:ok');
+        } catch (e) { steps.push('wake:err'); noteError('rotate-wake', e) }
+        steps.push('persist:' + (await saveState()));
+        return { ok: true, archived: oldId, sessionId: createdId, sessionTitle: SESSION_TITLE, steps };
+      };
+
+      // 「按需切换用哪个会话」（2026-09-17 用户定案：THU 一个会话、paratera 一个会话，按需切换使用）
+      //   POST /chat-feed/api/route-probe           只探（插件侧 fetch 可达性），回结果 + 暂定路线
+      //   POST /chat-feed/api/route-pick {route}    切到该路线的会话（该路线没会话就新建 + 灌唤醒文案 + 定模型）
+      routeOk.routeProbe = route('POST', 'route-probe', async (body) => {
+        const pr = await pluginProbe(body && body.route);   // 可带 {route} 只探那一条（2026-09-17）
+        return { ok: true, probe: pr, routePick: S.routePick, routeNeedsConfirm: !!S.routeNeedsConfirm };
+      });
+      routeOk.routePick = route('POST', 'route-pick', async (body) => {
+        const b = body || {};
+        const want = String(b.route || S.routePick || DEFAULT_ROUTE);
+        if (routeIds().indexOf(String(want)) < 0) return { ok: false, error: 'route 只能是 ' + routeIds().join(' / ') };
+        const r = await pickRoute(want, String(b.why || 'manual'));
+        return Object.assign({ ok: !!(r && r.ok), routePick: S.routePick, sessThu: S.sessThu, sessParatera: S.sessParatera }, r);
+      });
+      // **把一个已有会话挂进某个槽**（2026-09-17 加的补救手段）：例如把某个上下文很长的老会话挂成 paratera 槽，
+      //   免得"槽初始化时没认领到"就把老会话甩在外面。会把该会话的模型**对到该线路**。
+      //   POST /chat-feed/api/route-adopt {route:"thu"|"paratera", sessionId:"session-…"}
+      routeOk.routeAdopt = route('POST', 'route-adopt', async (body) => {
+        const b = body || {};
+        const route = String(b.route || '');
+        const sid = String(b.sessionId || '');
+        if (routeIds().indexOf(String(route)) < 0) return { ok: false, error: 'route 只能是 ' + routeIds().join(' / ') };
+        if (!/^session-/.test(sid)) return { ok: false, error: '要给一个 session-… 的 sessionId' };
+        const sc = ctx.get('sessionController'), wc = ctx.get('workspaceController');
+        if (!await liveOk(sc, sid, wc)) return { ok: false, error: '这个会话不在了（工作区成员表里没有、列表里也找不到）' };
+        S[routeSlotKey(route)] = sid;
+        const sm = await setRouteModel(sc, sid, route);
+        const active = String(S.sessionId || '') === sid ? await pickRoute(route, 'adopt') : null;
+        await saveState();
+        return { ok: true, route, sessionId: sid, sessThu: S.sessThu, sessParatera: S.sessParatera,
+                 model: sm, active: active && active.ok ? active.route : null };
+      });
+
+      // ---- 网关不通时的策略：接口保留（2026-09-17 白天**右栏那一栏已按用户要求删掉**，只剩自动触发用它）----
+      //   POST /chat-feed/api/gw-policy {policy:"skip"|"pipeline"|"full"}   读/写策略（默认 skip＝不通就不跑）
+      //   POST /chat-feed/api/gw-run    {mode:"full"|"pipeline"}            无视探测，强制用付费 paratera 补跑一轮
+      routeOk.gwPolicy = route('POST', 'gw-policy', async (body) => {
+        const b = body || {};
+        const want = String(b.policy || '');
+        if (['skip', 'pipeline', 'full'].indexOf(want) < 0) {
+          return { ok: false, error: 'policy 只能是 skip / pipeline / full', gwPolicy: S.gwPolicy || 'skip' };
+        }
+        S.gwPolicy = want; await saveState();
+        return { ok: true, gwPolicy: S.gwPolicy };
+      });
+      routeOk.gwRun = route('POST', 'gw-run', async (body) => {
+        const b = body || {};
+        const mode = (String(b.mode || 'full') === 'pipeline') ? 'pipeline' : 'full';
+        return await triggerRound('manual-paid', { forceRoute: R1, forceMode: mode });
+      });
+
+      // 【非默认手段·保留】会话内直接换模型（DSH `sessionController.selectModel`）。
+      // 2026-09-17 用户改为"两个会话按需切换"之后，这条**不再用于日常换线路**；留着是因为它
+      // 已被实测证明可用且不丢上下文，个别场景（例如临时把某个会话指到别的模型做对照）还能用。
+      //   依据＝DSH `sessionController.selectModel({sessionId, provider, model, reasoningEffort?})`（@Remote('selectModel')）：
+      //   宿主在**下一次提示词组装边界**快照完整 ModelSelection 并生效，**运行中的那一步保留已组装的旧选择**
+      //   ⇒ 在一轮的第 0 步调用它，后面的步就跑在新模型上（约 1–2 步仍走旧线路）。
+      //   前置：先 `resolveAgent(sessionId)` 显式恢复会话（契约原文 "after explicitly resuming the Session"）。
+      routeOk.route = route('POST', 'route', async (body) => {
+        const b = body || {};
+        const sc = ctx.get('sessionController');
+        if (!sc || !sc.selectModel) return { ok: false, error: 'sessionController.selectModel 不可用' };
+        const sid = String(b.sessionId || S.mainSessionId || S.sessionId || '');
+        if (!sid) return { ok: false, error: '没有会话 id' };
+        if (!b.provider || !b.model) return { ok: false, error: '要给 provider + model' };
+        const steps = [];
+        try { if (sc.resolveAgent) { await sc.resolveAgent(sid); steps.push('resume:ok') } } catch (e) { steps.push('resume:err') }
+        let r = null, err = '';
+        const reqSel = { sessionId: sid, provider: String(b.provider), model: String(b.model) };
+        if (b.reasoningEffort) reqSel.reasoningEffort = String(b.reasoningEffort);
+        try { r = await sc.selectModel(reqSel) } catch (e) { err = String((e && e.message) || e) }
+        const sel = (r && r.selected) || null;
+        if (sel) {
+          S.routeProvider = String(sel.provider); S.routeModel = String(sel.model);
+          S.routeEffort = sel.reasoningEffort ? String(sel.reasoningEffort) : '';
+          S.routeAt = Date.now(); steps.push('persist:' + (await saveState()));
+        }
+        return { ok: !!sel, sessionId: sid, requested: reqSel, selected: sel,
+                 error: err || (sel ? '' : 'selectModel 没返回 selected（看 code/message）'), steps };
+      });
+
+      // 「刷新会话」路由：前端只有在用户于确认框里点"确认"后才会调它（**只在上下文真的爆了时用**；换模型/换线路不用它）。
+      routeOk.rotate = route('POST', 'rotate', async (body) =>
+        await rotateSession('manual-route', String((body && body.sessionId) || S.sessionId || '')));
+
+      // 「上下文阈值自动刷新」的读/改入口（2026-09-15 晚）：
+      //   POST /chat-feed/api/ctx {auto?, ratio?, fallback?, cooldownMs?, now?, dryRotate?}
+      //   · 不带参数＝只读回配置与最近一次实测用量
+      //   · `now:true` ＝立刻探一次用量（不改状态、不刷新），用来"看现在多满"
+      //   · `dryRotate:true` ＝只判断"会不会刷"，**不真的刷**（给验证用，安全）
+      routeOk.ctx = route('POST', 'ctx', async (body) => {
+        const b = body || {};
+        if (typeof b.auto === 'boolean') S.ctxAuto = b.auto;
+        if (Number(b.ratio) > 0 && Number(b.ratio) <= 1) S.ctxRatio = Number(b.ratio);
+        // THU 单独一个阈值（2026-09-17 晚加）：上限 0.75 —— 再高就越过 DSH 的压缩线（0.8），永远不会触发
+        if (Number(b.ratioThu) > 0 && Number(b.ratioThu) <= 1) S.ctxRatioThu = Math.min(Number(b.ratioThu), 0.75);
+        if (Number(b.fallback) > 0) S.ctxFallback = Number(b.fallback);
+        if (Number(b.cooldownMs) >= 0) S.ctxCooldownMs = Number(b.cooldownMs);
+        await saveState();
+        let probe = null, wouldRotate = null;
+        const sc = ctx.get('sessionController');
+        if ((b.now || b.dryRotate) && sc && sc.inspect && S.sessionId) {
+          probe = await ctxProbe(sc);
+          if (!probe.err && probe.tokens) {
+            const _r2 = ctxRatioOf(routeOfActive());
+            const limit = probe.window > 0 ? Math.floor(probe.window * _r2) : S.ctxFallback;
+            wouldRotate = probe.tokens >= limit && !probe.open && probe.turn !== S.ctxLastRotateTurn;
+          }
+        }
+        if (b.rotateNow === true && wouldRotate) {
+          S.ctxLastRotateTurn = probe.turn; S.ctxLastRotateAt = Date.now();
+          const r = await rotateSession('ctx-manual-now');
+          if (r && r.ok) S.ctxRotations = (S.ctxRotations || 0) + 1;
+          // A23：与自动轮换同一套留痕（手动这条路本来就把 steps 回给调用方，但也落盘一份，便于事后查）
+          S.ctxLastRotateWhy = 'ctx-manual-now';
+          S.ctxLastRotateOk = !!(r && r.ok);
+          S.ctxLastRotateArchived = String((r && r.archived) || '');
+          S.ctxLastRotateErr = String((r && r.error) || '');
+          S.ctxLastRotateSteps = (r && Array.isArray(r.steps))
+            ? r.steps.slice(0, 24).map((x) => String(x).slice(0, 90))
+            : ['err:' + String((r && r.error) || 'no-steps')];
+          await saveState();
+          return { ok: true, rotated: !!(r && r.ok), ctxAuto: S.ctxAuto, steps: r && r.steps };
+        }
+        return { ok: true, ctxAuto: S.ctxAuto, ctxRatio: S.ctxRatio, ctxFallback: S.ctxFallback,
+                 ctxCooldownMs: S.ctxCooldownMs, ctxTokens: S.ctxTokens, ctxWindow: S.ctxWindow,
+                 ctxLimit: S.ctxLimit, ctxPct: S.ctxPct, ctxChecks: S.ctxChecks, ctxSkips: S.ctxSkips,
+                 ctxRotations: S.ctxRotations, ctxLastRotateAt: S.ctxLastRotateAt,
+                 ctxLastRotateTurn: S.ctxLastRotateTurn, probe, wouldRotate };
+      });
+
+      // 「获取」：真的触发一轮（把当日一轮的指令注入主 agent 会话；busy 由 turn/end 轮询收尾）
+      // body {dry:true} → 只回将要注入的原文（测试用，不真触发、不花钱）
+      routeOk.collect = route('POST', 'collect', async (body) => {
+        const date = cstDay();
+        // body {route:"thu"|"paratera"} → 「获取」下拉里**选了提供商**（2026-09-17 用户要求）：
+        //   现场探这一条，通了才触发；**不通就直接回失败、且不写采集指针**（前端把按钮闪成红底白字「获取失败」）。
+        if (body && routeIds().indexOf(String(body.route)) >= 0) {
+          return await triggerRound('manual', { probeRoute: String(body.route) });
+        }
+        // body {at: <ms|秒>} → 只拨"上次采集"指针（不触发一轮）。用于把基准对到"上一次真的采集到哪"。
+        if (body && body.at) {
+          let v = Number(body.at);
+          if (v && v < 1e12) v = v * 1000;                 // 秒自动升成毫秒
+          if (v > 0) {
+            // ★ 前移护栏（2026-09-15 事故后加）：把指针**往后拨** = 跳过 (旧指针, 新指针] 这段窗口，
+            //   而取数按日期过滤 → 后一天重跑也补不到前一天的尾巴，**这段就永久没人覆盖**。
+            //   实测事故：某次"恢复"把真实的 09-13 23:46 错拨成 09-14 00:00 →
+            //   09-13 23:46:40–24:00（约 14 分钟）哪一轮都没取到。
+            //   所以：前移超过 10 分钟必须显式带 {"confirm":"skip-window"}（要求操作者确认这段已另行覆盖）。
+            const prev = Number(S.lastCollectAt) || 0;
+            const skipMs = prev > 0 ? v - prev : 0;
+            if (skipMs > 10 * 60 * 1000 && !(body && body.confirm === 'skip-window')) {
+              return { ok: false, error: '指针前移会跳过约 ' + Math.round(skipMs / 60000) + ' 分钟窗口（不会被任何一轮覆盖）',
+                       wouldSkipMs: skipMs, from: prev, to: v,
+                       hint: '若这段确实已单独覆盖，重发并带 {"confirm":"skip-window"}' };
+            }
+            S.lastCollectAt = v;
+            // 拨指针是**记账**，不是"今天已经采集过" → 把去重标记清掉，
+            // 否则接下来「自动」到点也不会触发（用户要能跑获取和自动）。
+            S.collectDay = ''; S.autoFiredDay = '';
+            await saveState();
+            return { ok: true, set: true, lastCollectAt: S.lastCollectAt, hm: cstHM(S.lastCollectAt), collectDay: S.collectDay, skippedMs: skipMs > 0 ? skipMs : 0 };
+          }
+          return { ok: true, set: true, lastCollectAt: S.lastCollectAt, hm: cstHM(S.lastCollectAt), collectDay: S.collectDay };
+        }
+        if (body && body.dry) {
+          if (!S.sessionId) { try { await loadState() } catch (e) {} }   // 让 dry 结果与真实路径一致
+          const text = roundPrompt(date, 'manual', S.lastCollectAt || 0);
+          return { ok: true, dry: true, date, auto: S.auto, autoTime: S.autoTime, busy: S.busy,
+                   collectDay: S.collectDay, lastCollectAt: S.lastCollectAt, lastCollectHM: cstHM(S.lastCollectAt),
+                   sessionId: S.sessionId, promptChars: text.length, prompt: text };
+        }
+        return await triggerRound('manual');
+      });
+      // 面板结构（数据驱动 + 热更新，2026-09-14）：主 agent 只写数据，渲染由插件负责。
+      //   活数据文件 = `DIR\panel.json`（DIR 是插件数据目录 %TEMP%\dsh-chat-digest；Host 的 fs 写不进项目树）
+      //   GET  → 每次请求**重读盘**（内容变了就用新的；读不到/写坏则回退内置默认，绝不白屏）
+      //   POST → 整份替换（校验失败**拒绝并回显原因**，不半生效）
+      //   ⇒ 这就是它的"自证入口"：改完只看这个接口就知道生效没有（无需 UI 调试）
+      // 活数据文件：与 STATE_FILE **同目录**（持久数据根 %LOCALAPPDATA%\\dsh-chat-digest；DIR 指向 lib/ 不是数据目录）
+      // 仓库里的样例是 `docs/panel.example.json`（**没有任何代码读它**，只是给人看的模板）
+      // A25（2026-09-25，A18 的漏网之鱼）：面板活数据原先**还在 %TEMP%** —— 与 state 同一个毛病
+      //   （Temp 被清理 ⇒ 面板静默退回内置默认）。现在与 STATE_FILE **同目录**（持久数据根），
+      //   并保留旧 Temp 路径做一次性迁移：读到旧的就在下面落盘到新位置，**旧文件不删**。
+      const PANEL_FILE = STATE_DIR + '\\panel.json';
+      // 旧位置同样是**列表**（改名前的持久位置才是他 552 B 的那份自定义面板）。
+      const PANEL_OLD = [
+        _LOC + '\\chat-feed\\panel.json',
+        _TMP + '\\chat-feed\\panel.json',
+        _TMP + '\\dsh-chat-digest\\panel.json',
+      ];
+      const PANEL_DEFAULT = { version: 1, fallbackKind: 'life', kindAliases: {}, sections: [
+        { id: 'todo', title: '一、待办', kinds: ['todo'], order: 1 },
+        { id: 'chance', title: '二、机会与招募', kinds: ['chance'], order: 2 },
+        { id: 'info', title: '三、有用信息', kinds: ['official', 'resource', 'peer', 'life'], order: 3 },
+      ] };
+      const panelSections = (j) => {
+        if (!j || !Array.isArray(j.sections) || !j.sections.length) return null;
+        const seen = new Set();
+        for (const s of j.sections) {
+          if (!s || typeof s.id !== 'string' || typeof s.title !== 'string' || !Array.isArray(s.kinds)) return null;
+          if (seen.has(s.id)) return null; seen.add(s.id);
+        }
+        return j.sections.slice().sort((a, b) => (a.order || 0) - (b.order || 0));
+      };
+      const readPanel = async () => {
+        try {
+          // ⚠ 不要用 fsSvc.stat（fs 服务只有 readText/writeText/resolve，stat 不存在 —— 实测踩过：
+          //   一调用就抛 → 明明文件在也永远落 fallback）。小 JSON 直接读文本、比内容决定是否刷新缓存。
+          const text = await fsSvc.readText(await fsSvc.resolve(PANEL_FILE));
+          if (S.panelCacheText !== text) { S.panelCacheText = text; S.panelCache = JSON.parse(text); }
+          const secs = panelSections(S.panelCache);
+          S.panelErr = '';
+          return secs ? { ok: true, source: 'panel.json(' + text.length + 'B)', fallback: false, json: S.panelCache, sections: secs }
+                      : { ok: true, source: 'panel.json(结构非法→内置默认)', fallback: true, json: PANEL_DEFAULT, sections: PANEL_DEFAULT.sections };
+        } catch (e) {
+          // A25 一次性迁移 + 改名兼容：旧位置是**列表**，按顺序试
+          //   （改名前的 %LOCALAPPDATA%\\chat-feed\\panel.json 才是他自定义的那份）。
+          try {
+            let oldList = [];
+            if (typeof PANEL_OLD === 'string' && PANEL_OLD) oldList = [PANEL_OLD];
+            else if (typeof PANEL_OLD !== 'undefined' && Array.isArray(PANEL_OLD)) oldList = PANEL_OLD;
+            let oldText = '';
+            for (const cand of oldList) {
+              if (!cand) continue;
+              try { const t = await fsSvc.readText(await fsSvc.resolve(cand)); if (t) { oldText = t; break } } catch (e3) {}
+            }
+            if (oldText) {
+              if (S.panelCacheText !== oldText) { S.panelCacheText = oldText; S.panelCache = JSON.parse(oldText); }
+              try { await fsSvc.writeText(await fsSvc.resolve(PANEL_FILE), oldText) } catch (e2) {}
+              const secs0 = panelSections(S.panelCache);
+              S.panelErr = '';
+              return secs0 ? { ok: true, source: 'panel.json(' + oldText.length + 'B，已从旧 %TEMP% 迁到 ' + PANEL_FILE + ')', fallback: false, json: S.panelCache, sections: secs0 }
+                           : { ok: true, source: 'panel.json(结构非法→内置默认)', fallback: true, json: PANEL_DEFAULT, sections: PANEL_DEFAULT.sections };
+            }
+          } catch (e2) { /* 旧位置也没有：本来就是全新安装，走内置默认 */ }
+          S.panelErr = String((e && e.message) || e);
+          return { ok: true, source: '内置默认', fallback: true, json: PANEL_DEFAULT, sections: PANEL_DEFAULT.sections };
+        }
+      };
+      // 面板自证（面板扩展 spec §2.3）：`/api/panel` 与 `/state.panel` 共用同一份计算。
+      // 主 agent 改完 `panel.json`（或 POST `/panel/set`）后，读任一个都能确认"生效没 / 有没有未知 kind"。
+      const panelView = async () => {
+        const r = await readPanel();
+        const known = new Set();
+        for (const s of r.sections) for (const k of s.kinds) known.add(k);
+        for (const k of Object.keys(r.json.kindAliases || {})) known.add(k);
+        const unknown = [];
+        for (const it of (S.items || [])) if (it && it.kind && !known.has(it.kind)) unknown.push(String(it.kind));
+        return { ok: true, source: r.source, fallback: r.fallback, err: S.panelErr || '', version: r.json.version || 1,
+                 fallbackKind: r.json.fallbackKind || 'life', kindAliases: r.json.kindAliases || {},
+                 sections: r.sections.map((s) => ({ id: s.id, title: s.title, kinds: s.kinds, order: s.order || 0,
+                   count: (S.items || []).filter((x) => x && x.kind && s.kinds.indexOf(x.kind) >= 0).length })),
+                 unknownKinds: Array.from(new Set(unknown)), itemCount: (S.items || []).length, fallbackUsed: 0 };
+      };
+      routeOk.panel = route('GET', 'panel', panelView);
+      routeOk.panelSet = route('POST', 'panel/set', async (body) => {
+        const j = body && (body.json || body);
+        const secs = panelSections(j);
+        if (!secs) return { ok: false, error: '校验失败：sections 必须是非空数组，且每项含 id(string)/title(string)/kinds(数组)，id 不得重复' };
+        try {
+          await fsSvc.writeText(await fsSvc.resolve(PANEL_FILE), JSON.stringify(j, null, 2));
+          S.panelCache = j; S.panelMtime = null;      // 下次读盘刷新
+          return { ok: true, sections: secs.length, source: PANEL_FILE };
+        } catch (e) { noteError('panel-write', e); return { ok: false, error: String((e && e.message) || e) } }
+      });
+      routeOk.setAuto = route('POST', 'set-auto', async (body) => {
+        if (body && typeof body.on === 'boolean') S.auto = body.on;
+        if (body && typeof body.time === 'string' && /^[0-2]\d:[0-5]\d$/.test(body.time)) S.autoTime = body.time;
+        const persist = await saveState();
+        return { auto: S.auto, autoTime: S.autoTime, persist };
+      });
+      const failed = Object.keys(routeOk).filter((k) => routeOk[k] === false).concat(registered.ui ? [] : ['ui.js'], registered.right ? [] : ['right.js']);
+      if (failed.length) { S.lastRouteError = '注册失败：' + failed.join(', ') + (S.lastRouteError ? ' | ' + S.lastRouteError : ''); console.error('[cf] 路由注册失败：', failed.join(', ')) }
+
+      try {
+        const off = ws.tapIndex((html) => {
+          try {
+            if (typeof html !== 'string') return html;
+            let out = html;
+            // 顺序：ui.js 先、right.js 后 —— right.js 只负责定义 window.__cfwRight，
+            // ui.js 的 renderPanel() 才是真正 mount 它的地方；反过来会让后加载的脚本把前一份覆盖掉。
+            if (out.indexOf(SCRIPT_UI) < 0) { const tag = '<script src="' + SCRIPT_UI + '" defer></script>'; out = out.indexOf('</body>') >= 0 ? out.replace('</body>', tag + '</body>') : out + tag }
+            if (out.indexOf(SCRIPT_RIGHT) < 0) { const tag = '<script src="' + SCRIPT_RIGHT + '" defer></script>'; out = out.indexOf('</body>') >= 0 ? out.replace('</body>', tag + '</body>') : out + tag }
+            return out;
+          } catch (e) { return html }
+        });
+        disposers.push(off);
+      } catch (e) { noteError('tapIndex', e) }
+
+      ctx.effect(() => () => { disposers.forEach((off) => { try { off() } catch (e) {} }) });
+      console.log('[cf] ready v34：主 agent 入口链指向规格；' + JSON.stringify(routeOk));
+    } catch (e) { console.error('[cf] apply 失败：', e) }
+  },
+};

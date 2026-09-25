@@ -1,0 +1,33 @@
+name: ci
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: node ${{ matrix.node }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node: ['24.x']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      # No install step on purpose: the plugin has no runtime dependencies and
+      # the probes run on plain node.
+      - name: Syntax check
+        run: npm run check
+      - name: Host probes
+        run: npm run test:host
+      # The two Python probes are deliberately local-only: they are the author's
+      # own instruments (they write scratch copies to the system temp dir and the
+      # pipeline probe needs the author's fixtures), not a release gate.

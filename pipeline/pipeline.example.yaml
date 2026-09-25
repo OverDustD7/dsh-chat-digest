@@ -1,0 +1,32 @@
+# 管线要用的「个人信息」。复制这份到你的 localDir 下、改名 pipeline.yaml 再填自己的值。
+# 路径示例是 Windows 的；`wx_msg_glob` 支持 * 通配。
+#
+#   <localDir>/pipeline.yaml
+#
+# localDir 与插件一致：$DSH_CHAT_FEED_LOCAL → 包旁的 local/。
+# 代码里不写死任何值 —— 缺哪个键，脚本会打印缺什么、去哪个文件填，然后退出。
+
+# ── 微信 ──────────────────────────────────────────────────────────────
+# 微信数据根（xwechat_files 下你自己的那层，通常是 wxid_xxx）
+wx_account_dir: 'C:\Users\<you>\Documents\xwechat_files\wxid_xxxxxxxxxxxx'
+# 附件（图片/文件）所在的 msg 目录，可用 * 通配
+wx_msg_glob: 'C:\Users\<you>\Documents\xwechat_files\*\msg'
+# 取数据库密钥用的 kvcomm 目录（微信 4.x）
+wx_key_dir: 'C:\Users\<you>\AppData\Roaming\Tencent\xwechat\net\kvcomm'
+
+# ── QQ ───────────────────────────────────────────────────────────────
+# 你自己的 wxid（数据库里存的是短形式，不等于 wx_account_dir 的末段）
+self_wxid: 'wxid_xxxxxxxxxxxx'
+# 主群（有些脚本要一个默认群）
+main_group: ''
+
+self_qq: '<your-qq>'
+qq_data_dir: 'C:\Users\<you>\Documents\Tencent'
+
+# ── 工作目录（管线的产物都写这里，不放包里）────────────────────────────
+# 主 agent 的工作区；插件的 agentCwd 建议指到这里
+work_dir: 'C:\path\to\your\pipeline-workspace'
+output_dir: 'C:\path\to\your\pipeline-workspace\output'
+
+# ── 只保留这些群（留空 = 不筛）───────────────────────────────────────
+groups: []
