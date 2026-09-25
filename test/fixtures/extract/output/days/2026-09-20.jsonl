@@ -1,0 +1,2 @@
+{"src": "QQ", "chat": "test", "chat_name": "test", "ts": 1789833600, "sender": "test", "sender_name": "test", "type": "QQ1/1", "text": "synthetic", "raw": "{}", "msg_id": "QQ:group:test:?", "src_db": "nt_msg_export.db", "src_table": "group_messages", "chat_kind": "group"}
+{"src": "QQ", "chat": "test", "chat_name": "test", "ts": 1789833600, "sender": "test", "sender_name": "test", "type": "QQ私聊1/1", "text": "synthetic", "raw": "{}", "msg_id": "QQ:c2c:test:?", "src_db": "nt_msg_export.db", "src_table": "c2c_messages", "chat_kind": "c2c"}

@@ -1,0 +1,46 @@
+[
+  {
+    "id": "P01_decrypt_all_missing_fails",
+    "expected": true,
+    "actual": true,
+    "pass_": true
+  },
+  {
+    "id": "P02_stale_artifact_rejected",
+    "expected": true,
+    "actual": true,
+    "pass_": true
+  },
+  {
+    "id": "P03_all_steps_fail_nonzero_exit",
+    "expected": true,
+    "actual": true,
+    "pass_": true
+  },
+  {
+    "id": "P04_missing_ids_preserve_delivery",
+    "expected": [
+      {
+        "id": "preserve"
+      }
+    ],
+    "actual": [
+      {
+        "id": "preserve"
+      }
+    ],
+    "pass_": true
+  },
+  {
+    "id": "P05_qq_group_and_private_extracted",
+    "expected": 2,
+    "actual": 2,
+    "pass_": true
+  },
+  {
+    "id": "P06_same_size_qq_cache_refreshed",
+    "expected": true,
+    "actual": true,
+    "pass_": true
+  }
+]

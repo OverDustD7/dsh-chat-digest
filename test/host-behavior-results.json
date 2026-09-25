@@ -1,0 +1,194 @@
+[
+  {
+    "id": "H01_error_auto_retry",
+    "expected": 1,
+    "actual": 1,
+    "pass": true
+  },
+  {
+    "id": "H02_empty_items_restore",
+    "expected": [],
+    "actual": [],
+    "pass": true
+  },
+  {
+    "id": "H03_patch_persist_failure",
+    "expected": "save-fail",
+    "actual": "save-fail",
+    "pass": true
+  },
+  {
+    "id": "H04_patch_preserve_done",
+    "expected": true,
+    "actual": true,
+    "pass": true
+  },
+  {
+    "id": "H05_301_items_preserved_or_rejected",
+    "expected": true,
+    "actual": true,
+    "pass": true
+  },
+  {
+    "id": "H06_cursor_waits_for_successful_delivery",
+    "expected": 1,
+    "actual": 1,
+    "pass": true
+  },
+  {
+    "id": "H07_concurrent_collect_single_dispatch",
+    "expected": 1,
+    "actual": 1,
+    "pass": true
+  },
+  {
+    "id": "H08_default_probe_route_matches_target",
+    "expected": {
+      "requested": "synthetic-paratera",
+      "route": "paratera"
+    },
+    "actual": {
+      "requested": "synthetic-paratera",
+      "route": "paratera"
+    },
+    "pass": true
+  },
+  {
+    "id": "H09_auto_not_cancelled_by_manual_round",
+    "expected": 1,
+    "actual": 1,
+    "pass": true
+  },
+  {
+    "id": "H10_auto_dedup_by_autoFiredDay",
+    "expected": 0,
+    "actual": 0,
+    "pass": true
+  },
+  {
+    "id": "H11_auto_waits_until_autoTime",
+    "expected": 0,
+    "actual": 0,
+    "pass": true
+  },
+  {
+    "id": "H12_undelivered_round_resumes",
+    "expected": 1,
+    "actual": 1,
+    "pass": true
+  },
+  {
+    "id": "H13_resume_capped_at_3",
+    "expected": 0,
+    "actual": 0,
+    "pass": true
+  },
+  {
+    "id": "H14_resume_waits_10min",
+    "expected": 0,
+    "actual": 0,
+    "pass": true
+  },
+  {
+    "id": "H15_pending_ask_detected",
+    "expected": {
+      "pending": true,
+      "header": "清理①已勾选",
+      "options": 2
+    },
+    "actual": {
+      "pending": true,
+      "header": "清理①已勾选",
+      "options": 2
+    },
+    "pass": true
+  },
+  {
+    "id": "H16_answered_ask_not_pending",
+    "expected": false,
+    "actual": false,
+    "pass": true
+  },
+  {
+    "id": "H17_ask_of_ended_turn_not_pending",
+    "expected": false,
+    "actual": false,
+    "pass": true
+  },
+  {
+    "id": "H18_corrupt_state_restores_from_bak",
+    "expected": {
+      "rc": "restored",
+      "id": "from-bak",
+      "quarantined": true,
+      "quarantinedKeepsRaw": true
+    },
+    "actual": {
+      "rc": "restored",
+      "id": "from-bak",
+      "quarantined": true,
+      "quarantinedKeepsRaw": true
+    },
+    "pass": true
+  },
+  {
+    "id": "H19_corrupt_without_bak_returns_none",
+    "expected": "none",
+    "actual": "none",
+    "pass": true
+  },
+  {
+    "id": "H20_legacy_state_migrated_and_persisted",
+    "expected": {
+      "rc": "restored",
+      "id": "legacy",
+      "saveCalls": 1
+    },
+    "actual": {
+      "rc": "restored",
+      "id": "legacy",
+      "saveCalls": 1
+    },
+    "pass": true
+  },
+  {
+    "id": "H21_rotate_rebases_route_slots",
+    "expected": {
+      "archivedOld": true,
+      "paratera": "session-NEWNEWNEW",
+      "thu": "session-OTHER",
+      "ok": true
+    },
+    "actual": {
+      "archivedOld": true,
+      "paratera": "session-NEWNEWNEW",
+      "thu": "session-OTHER",
+      "ok": true
+    },
+    "pass": true
+  },
+  {
+    "id": "H22_extra_mains_found_excluding_current_and_slots",
+    "expected": [
+      "session-X1",
+      "session-X3"
+    ],
+    "actual": [
+      "session-X1",
+      "session-X3"
+    ],
+    "pass": true
+  },
+  {
+    "id": "H23_route_why_names_probed_route",
+    "expected": {
+      "namesProbed": true,
+      "namesThu": false
+    },
+    "actual": {
+      "namesProbed": true,
+      "namesThu": false
+    },
+    "pass": true
+  }
+]
