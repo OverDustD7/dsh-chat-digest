@@ -1,0 +1,65 @@
+# dsh-chat-digest · 生成物 / 抓取物不入库（都是可复现的中间产物）
+#
+# 坑（2026-09-25 实测，踩过）：gitignore 的 `#` **只有行首**才是注释 —— 写在同一行后面会被
+# 当成**模式的一部分**，那条规则就**静默失效**。原来这条就是这么写的：
+#     tools/archive/json/          # 25 MB 的抓取快照（hit-tapIndex.json 等）
+# 实测 `git check-ignore` 一次都没命中过；那份 26 MB 的抓取在加规则之前就已经进了库。
+# ⇒ 写 ignore 规则一律**注释另起一行**，加完**用 `git check-ignore -v <路径>` 验一遍**。
+tools/archive/json/
+*.log
+node_modules/
+
+# Python 字节码缓存（2026-09-25 补；这条已实测命中）
+__pycache__/
+*.pyc
+
+# 探针跑一次就重写一份的结果（2026-09-25 迁到 test/ 时改为不入库）：
+# 它们每次运行内容都变，入库就等于"跑一次验收脏一次工作区"（A26 的同一类毛病）。
+# 要证据就跑探针现场生成，别把会变的快照当版本化证据。
+test/*-results.json
+
+# ── 私人内容：只留本地，**永不入库**（2026-09-25）─────────────────────────────
+# 已用 git-filter-repo 从**全部历史**里摘掉（master 已重写；旧血统留在本地分支 `local-full-history`）
+#   · 截图：面板截图＝他的真实聊天内容（选课/班级/老师/学号/群通知）
+#   · 会话抓取与事件转储：`hit-tapIndex.json`（26 MB，含本机登录 token）、`dumps/`、`_ctxcheck*.txt` 等
+# 判据：**这些路径下的任何文件都不许 `git add`**。要检查有没有漏进去：
+#   git log master --oneline -- <路径>            （应为空）
+#   git rev-list --objects master | ...           （历史里不该再有 >1 MB 的 blob）
+*.png
+*.jpg
+*.jpeg
+*.webp
+*.gif
+tools/archive/dumps/
+archive/2026-09-20/tools/_ctxcheck.txt
+archive/2026-09-20/tools/_ctxcheck2.txt
+archive/2026-09-20/tools/_meta2.txt
+archive/2026-09-20/tools/_seq.txt
+tools/archive/superseded/_event_out.txt
+
+# 开发史整块留本地、不进公开分支（2026-09-25）：旧快照 archive/ 与"已被取代"的桶 tools/archive/
+# 里含大量旧 host body 副本（带用户名）与截图。它们对发布零价值，写在树里等于把开发史一起公开。
+archive/
+tools/archive/
+
+
+
+
+# 部署方私人内容**只放这一个文件夹**（提示词/私有配置）：不入库、不进 npm 包。
+# 插件启动时读它；没有就用包内通用缺省。
+/local/
+
+pipeline/__pycache__/
+# 私密提示词的本地副本（含真实手机号/姓名）；只留本机，不进仓库
+tools/wake-text-live.md
+
+# ── 公开仓库里不该有的东西（2026-09-25 事故后加固）──────────────────────────
+# 这些目录里全是本机私有内容（内部交接、审计证据包、开发脚本、归档、真实抓取产物）。
+# 它们**留在磁盘上**，但永远不进仓库 —— 有了这些规则，git add -A 也不会把它们带上。
+/docs/
+/tools/
+/archive/
+/local/
+/test/fixtures/daily/
+*.before-*
+*.corrupt-*

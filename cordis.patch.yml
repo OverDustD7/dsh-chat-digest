@@ -1,0 +1,24 @@
+# dsh-chat-digest 的 bundle 挂载行：本包列进 profile 的 `dsh.profile.bundles` 后生效。
+#
+#   dsh plugin --profile web add dsh-chat-digest          # 从 npm 装
+#   dsh plugin --profile web add link:D:\path\to\dsh-chat-digest   # 本地开发（链接本目录）
+#
+# 然后确认 "dsh-chat-digest" 在 `~/.dsh/profiles/web/package.json` 的 `dsh.profile.bundles` 里，
+# **重启 `dsh web`**（宿主半边不重启不生效）。
+#
+# 这里**不再写任何绝对路径**（A15 发布化，2026-09-25）：Host 函数体默认取包内的
+# `lib/host-body.txt`，由 `lib/plugin.js` 按**包自身位置**解析 ⇒ 换机器不必改本文件。
+#
+# 下面这些键都**可选**，只在要覆盖缺省时才写；写在 profile 自己的 patch 层
+# （`~/.dsh/profiles/web/cordis.patch.yml`）里，按 id 覆盖这一行：
+#   bodyPath   权威 Host 函数体（默认 <包>/lib/host-body.txt；环境变量 DSH_CHAT_FEED_BODY 亦可）
+#   stateDir   插件数据目录（默认 %LOCALAPPDATA%\dsh-chat-digest）
+#   agentCwd   主 agent 的会话 cwd ＝ 它的工作区（默认 <stateDir>\workspace；通常要指到你的取数管线目录）
+#   agentPreset 建会话时带的 agent preset（默认不带）
+#   localDir   你的私人内容目录（prompt.md / round.md）；默认 <包>/local；从 npm 装进来时建议指到固定目录
+#   wxRoot     微信附件根（**没有缺省值**，要 `file:` 链接就必须配）
+#   dshHome    DSH 家目录（默认 $DSH_HOME，没设就 %USERPROFILE%\.dsh）
+#   fileRoots  允许取字节 / 用默认应用打开的根目录数组（默认 [wxRoot, <agentCwd>\output]）
+- insert:
+    - id: dsh-chat-digest
+      name: 'dsh-chat-digest'

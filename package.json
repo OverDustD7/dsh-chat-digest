@@ -1,0 +1,63 @@
+{
+  "name": "dsh-chat-digest",
+  "version": "1.3.0",
+  "description": "Turn WeChat / QQ chat logs into one panel list that keeps growing, maintained by a resident main-agent session. Ships no ingestion pipeline: feed items over HTTP and the panel grows. Installs as a DSH profile bundle (Cordis plugin).",
+  "type": "module",
+  "main": "lib/plugin.js",
+  "files": [
+    "lib",
+    "pipeline",
+    "examples",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE",
+    "README.zh.md",
+    "CHANGELOG.md"
+  ],
+  "engines": {
+    "node": ">=22.5",
+    "dsh": ">=0.1.5-rc.1"
+  },
+  "scripts": {
+    "check": "node --check lib/plugin.js && node --check lib/ui.js && node --check lib/right.js",
+    "check:body": "python tools/check_host_body.py",
+    "test:host": "node test/host-behavior-checks.mjs",
+    "test:pipeline": "python test/pipeline-behavior-checks.py",
+    "prepack": "npm run check && npm run test:host"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/OverDustD7/dsh-chat-digest.git"
+  },
+  "homepage": "https://github.com/OverDustD7/dsh-chat-digest#readme",
+  "bugs": {
+    "url": "https://github.com/OverDustD7/dsh-chat-digest/issues"
+  },
+  "author": "冯思韬 (OverDustD7)",
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "dsh-plugin",
+    "cordis-plugin",
+    "dsh-bundle",
+    "wechat",
+    "qq",
+    "chat-logs",
+    "digest",
+    "panel",
+    "agent-session",
+    "automation"
+  ],
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "compatibility": {
+      "dsh": ">=0.1.5-rc.1"
+    }
+  }
+}
