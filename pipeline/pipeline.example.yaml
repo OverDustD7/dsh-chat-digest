@@ -13,6 +13,9 @@ wx_account_dir: 'C:\Users\<you>\Documents\xwechat_files\wxid_xxxxxxxxxxxx'
 wx_msg_glob: 'C:\Users\<you>\Documents\xwechat_files\*\msg'
 # 取数据库密钥用的 kvcomm 目录（微信 4.x）
 wx_key_dir: 'C:\Users\<you>\AppData\Roaming\Tencent\xwechat\net\kvcomm'
+# 微信 4.x 的数据库密钥（64 位十六进制）。**必填** —— 脚本缺它会打印键名并 exit 2。
+#   自己怎么取：见 README「取数管线」；**别把它提交进任何仓库**。
+wx_key: '<64-hex-wechat-db-key>'
 
 # ── QQ ───────────────────────────────────────────────────────────────
 # 你自己的 wxid（数据库里存的是短形式，不等于 wx_account_dir 的末段）
@@ -22,6 +25,8 @@ main_group: ''
 
 self_qq: '<your-qq>'
 qq_data_dir: 'C:\Users\<you>\Documents\Tencent'
+# QQ（NT 版）的数据库密钥（64 位十六进制）。**必填** —— 同上。
+qq_key: '<64-hex-qq-db-key>'
 
 # ── 工作目录（管线的产物都写这里，不放包里）────────────────────────────
 # 主 agent 的工作区；插件的 agentCwd 建议指到这里
