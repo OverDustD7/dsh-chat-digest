@@ -1175,6 +1175,11 @@ const ROUND_GENERIC = (date, mode) => [
         if (ids && ids.indexOf(String(id)) >= 0) return true;    // 在工作区里 ⇒ 活着
         const s = await sessionSummary(sc, id);
         if (s && s.sessionId) return true;                      // 列表里能找到也算
+        // A29（2026-09-26 事故）：**「查不到」不等于「死了」**。控制器或工作区名单不可用时返回 null
+        //   （未知）—— 调用方不许据此清空槽、更不许拿别的会话顶替。事故现场：刚重启、工作区控制器
+        //   还没就绪 ⇒ 这里返回 false ⇒ 活着的会话被判 stale ⇒ 清槽 ⇒ paratera 槽被「当前会话」
+        //   顶替 ⇒ 侧栏出现两个 paratera 主 agent。
+        if (!wc || !sc || !ids) return null;
         return false;
       };
       // **当前活跃会话属于哪条线路** —— 阈值必须按"会话实际所在的线路"取，不能按 routePick
@@ -1254,7 +1259,9 @@ const ROUND_GENERIC = (date, mode) => [
         const sc = ctx.get('sessionController'), wc = ctx.get('workspaceController');
         const key = routeSlotKey(route);
         const stored = String(S[key] || '');
-        if (stored && await liveOk(sc, stored, wc)) { await setRouteModel(sc, stored, route); return stored }
+        // A29：**只有「确定死了」（false）才清槽**；未知（null）按「还在」处理 ⇒ 保留原槽、不认领、不新建。
+        const alive = stored ? await liveOk(sc, stored, wc) : false;
+        if (stored && alive !== false) { try { await setRouteModel(sc, stored, route) } catch (e) {} return stored }
         if (stored) { steps.push('slot-stale:' + route); S[key] = '' }
         // ② 槽空时**先按标题认回既有会话**（重启后槽没持久化也别新建）
         try {
@@ -1263,10 +1270,14 @@ const ROUND_GENERIC = (date, mode) => [
           const found = await adoptRouteByTitle(ids, routeTitles(route), [other], steps);
           if (found) { S[key] = found; await setRouteModel(sc, found, route); return found }
         } catch (e) { steps.push('adopt-title:err') }
-        if (String(route) === String(R1)) {
+        // A29：**只有「槽本来就是空的」才允许拿当前会话顶替**。曾经有过 stored（哪怕是死的）就绝不用当前
+        //   会话顶替 —— 那正是「多出一个主 agent」的直接来源。
+        if (String(route) === String(R1) && !stored) {
           const cur = String(S.sessionId || '');
-          if (cur && await liveOk(sc, cur, wc)) { S[key] = cur; steps.push('adopt-current-as-' + String(route)); return cur }
+          if (cur && (await liveOk(sc, cur, wc)) === true) { S[key] = cur; steps.push('adopt-current-as-' + String(route)); return cur }
         }
+        // A29：控制器不在就**什么都不建**（等下一次重试），别在没就绪的窗口里造会话。
+        if (!sc || !wc) { steps.push('create:skip:controllers-missing'); return '' }
         const made = await createRouteSession(route, steps);
         if (made) S[key] = made;
         return made;
@@ -1340,8 +1351,19 @@ const ROUND_GENERIC = (date, mode) => [
       const ensureBothSlots = async () => {
         if (S.slotsInitBusy) return;
         // **带版本号**：改过槽逻辑就 +1 ⇒ 下次载入会**再跑一次**初始化（否则 `slotsInitAt` 已存在，新的自愈逻辑永远轮不到）
-        const SLOTS_VER = 3;
+        const SLOTS_VER = 4;
         if (S.slotsInitAt && Number(S.slotsInitVer || 1) >= SLOTS_VER) return;
+        // A29：**控制器没就绪就不跑**（那一刻判活全会失败）。退避重试，最多 10 次；期间**不写任何状态**。
+        {
+          const sc0 = ctx.get('sessionController'), wc0 = ctx.get('workspaceController');
+          if (!sc0 || !wc0) {
+            const n = Number(S.slotsInitWait || 0);
+            S.slotsInitWait = n + 1;
+            if (n < 10) { const t = setTimeout(() => { try { ensureBothSlots() } catch (e) {} }, 3000); if (t && t.unref) t.unref() }
+            return;
+          }
+          S.slotsInitWait = 0;
+        }
         S.slotsInitBusy = true;
         const steps = [];
         try {
@@ -1696,7 +1718,7 @@ const ROUND_GENERIC = (date, mode) => [
         const q = String((req && req.url) || '');
         const slim = /[?&]slim=1(&|$)/.test(q);
         // 双会话懒初始化：第一次被问 /state 就后台把两个会话备好（幂等、不阻塞本次响应；**带版本号**，改逻辑后会再跑一次）
-        if ((!S.slotsInitAt || Number(S.slotsInitVer || 1) < 3) && !S.slotsInitBusy) { try { ensureBothSlots() } catch (e) { noteError('slots-init-kick', e) } }
+        if ((!S.slotsInitAt || Number(S.slotsInitVer || 1) < 4) && !S.slotsInitBusy) { try { ensureBothSlots() } catch (e) { noteError('slots-init-kick', e) } }
         return {
         auto: S.auto, autoTime: S.autoTime, busy: S.busy, lastCollectAt: S.lastCollectAt,
         lastDoneAt: S.lastDoneAt, busySince: S.busySince, collectDay: S.collectDay, autoFiredDay: S.autoFiredDay,
