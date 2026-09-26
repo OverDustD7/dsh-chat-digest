@@ -90,6 +90,18 @@ const WAKE_GENERIC = [
   "- **不要用 `ask_user_question` 阻塞自动轮**：自动轮不弹前台，问了没人答 ⇒ 整轮白跑。",
   "- 一轮里只做这一轮该做的事；看不到来源数据就问清楚，**不要编造数据**。",
 ].join('\n');const WAKE_TEXT = (typeof CF.wakeText === 'string' && CF.wakeText) ? CF.wakeText : WAKE_GENERIC;
+// A34（2026-09-27）：提示词里的**占位符** —— 部署方的路径不该写死在提示词里（写死了换机器即废，
+//   而且会把"某个人的目录"带进随包发布的通用提示词）。
+//   `{pkg}` 包目录 ｜ `{agent}` 主 agent 工作区 ｜ `{profile}` 个人目录 ｜ `{inbox}` 来源目录
+//   ｜ `{py}` 用哪个 python ｜ `{date}` / `{mode}` 本轮。
+const TPL = (s, date, mode) => String(s || '')
+  .replace(/\{pkg\}/g, String((typeof CF.pkgDir === 'string' && CF.pkgDir) || ''))
+  .replace(/\{agent\}/g, AGENT_CWD)
+  .replace(/\{profile\}/g, String((typeof CF.localDir === 'string' && CF.localDir) || ''))
+  .replace(/\{inbox\}/g, INBOX_DIR)
+  .replace(/\{py\}/g, String((typeof CF.python === 'string' && CF.python) || 'python'))
+  .replace(/\{date\}/g, String(date || ''))
+  .replace(/\{mode\}/g, String(mode || ''));
 
 const DEMO_ITEMS = [];   // 内置演示数据已清空（2026-09-25）：新装的面板从空开始，由你的取数管线填
 
@@ -769,7 +781,7 @@ const AGENT_PRESET = (typeof CF.agentPreset === 'string') ? CF.agentPreset : '';
         // 再灌一遍 wakeText。改成按会话 id 记账：S.seededFor === 当前会话 id 就绝不重发。
         if ((wantSeed || needWake) && !S.seeded && S.seededFor !== String(S.sessionId)) {
           try {
-            await sc.prompt({ requestId: 'seed-' + Date.now(), sessionId: S.sessionId, mode: 'queue', content: [{ type: 'text', text: WAKE_TEXT }] }, FAKE_SIGNAL);
+            await sc.prompt({ requestId: 'seed-' + Date.now(), sessionId: S.sessionId, mode: 'queue', content: [{ type: 'text', text: TPL(WAKE_TEXT) }] }, FAKE_SIGNAL);
             S.seeded = true; S.seededFor = String(S.sessionId); steps.push(needWake && !wantSeed ? 'wake:ok' : 'seed:ok'); await saveState();
           } catch (e) { steps.push('seed:err'); noteError('seed', e) }
         } else steps.push(S.seededFor === String(S.sessionId) && !S.seeded ? 'seed:alreadysent' : 'seed:skipped');
@@ -1257,7 +1269,7 @@ const ROUND_GENERIC = (date, mode) => [
         steps.push('model:' + (sm.ok ? (sm.selected.provider + '/' + sm.selected.model) : ('err ' + String(sm.error || ''))));
         try {
           await sc.prompt({ requestId: 'seed-' + route + '-' + Date.now(), sessionId: id, mode: 'queue',
-                            content: [{ type: 'text', text: WAKE_TEXT }] }, FAKE_SIGNAL);
+                            content: [{ type: 'text', text: TPL(WAKE_TEXT) }] }, FAKE_SIGNAL);
           steps.push('wake:ok');
         } catch (e) { steps.push('wake:err') }
         return id;
@@ -1773,7 +1785,7 @@ const ROUND_GENERIC = (date, mode) => [
         // 瘦身模式**连 wakeText 也不回**：它 13 KB，而主 agent 的会话前缀里本来就有一份，每次轮询重发纯属浪费
         itemsSlim: slim, sessionId: S.sessionId,
         mainSessionId: S.mainSessionId,
-        seeded: S.seeded, wakeText: slim ? '' : WAKE_TEXT, wakeTextLen: WAKE_TEXT.length, lastError: S.lastError,
+        seeded: S.seeded, wakeText: slim ? '' : TPL(WAKE_TEXT), wakeTextLen: TPL(WAKE_TEXT).length, lastError: S.lastError,
         routeError: S.lastRouteError, saveOk: S.lastSaveOk,
         quoteId: S.quote ? String(S.quote.id || '') : '',
         quoteNo: S.quote ? String(S.quote.no || '') : '',
@@ -2039,7 +2051,7 @@ const ROUND_GENERIC = (date, mode) => [
         try { if (sc.resolveAgent) await sc.resolveAgent(createdId) } catch (e) {}
         try { await sc.rename({ sessionId: createdId, title: SESSION_TITLE }); S.renamedAs = SESSION_TITLE; steps.push('rename:ok') } catch (e) { steps.push('rename:err') }
         try {
-          await sc.prompt({ requestId: 'rotate-seed-' + Date.now(), sessionId: createdId, mode: 'queue', content: [{ type: 'text', text: WAKE_TEXT }] }, FAKE_SIGNAL);
+          await sc.prompt({ requestId: 'rotate-seed-' + Date.now(), sessionId: createdId, mode: 'queue', content: [{ type: 'text', text: TPL(WAKE_TEXT) }] }, FAKE_SIGNAL);
           S.seeded = true; S.seededFor = createdId; steps.push('wake:ok');
         } catch (e) { steps.push('wake:err'); noteError('rotate-wake', e) }
         steps.push('persist:' + (await saveState()));

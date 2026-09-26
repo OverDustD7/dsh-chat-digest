@@ -126,7 +126,7 @@ for frag in ("const DIR =", "const WAKE_TEXT =", "apply(ctx)",
              "itemsSlim", "slimItem", "routeOk.itemsPatch = route", "items-patch",
              # 瘦身模式**连 wakeText 也不回**（13 KB，而主 agent 的会话前缀里本来就有一份）；
              # 同时把 wakeTextLen 回显出去，别让"瘦身"变成"看不见我丢了多少"
-             "wakeTextLen", "wakeText: slim ? '' : WAKE_TEXT",
+             "wakeTextLen", "wakeText: slim ? '' : TPL(WAKE_TEXT)",
              # 单位必须取 totalTokens（inputTokens 不含缓存命中，实测差 800 倍）——
              # 丢了这条断言，将来有人"顺手简化"成 input+output 就会静默失效
              "cacheReadTokens", "totalTokens",
@@ -212,7 +212,16 @@ for frag in ("const DIR =", "const WAKE_TEXT =", "apply(ctx)",
              #   两处落地：① 点击路径（toggle/delete/clear-done）改 `saveSoon()` —— 内存先改、`/state`
              #   立刻反映，落盘单飞+合并；② `saveState()` 不再"读回磁盘 + 解析"上一份（内存里有）。
              #   丢了这两条，点一下又会回到"等一秒"。
-             "const saveSoon", "saveDirty", "persist: 'queued'", "lastSavedText"):
+             "const saveSoon", "saveDirty", "persist: 'queued'", "lastSavedText",
+
+             # A34（2026-09-27）：说明书与工具箱进包 —— 提示词里的路径改成占位符；主 agent 工作区
+             #   缺省＝包内 `agent/`（说明书 docs/ + 工具箱 tools/ + 产物 output/ 都在这棵树里）。
+             #   丢了这两条，通用提示词又会退回"写死某个人的目录"，别人装完还是跑不起来。
+             "const TPL = (s, date, mode)", "{pkg}", "{agent}", "{profile}", "{py}",
+             "const AGENT_ROOT",
+             # （`linkProfileIntoAgent` / `DSH_CHAT_FEED_LOCAL` 在 lib/plugin.js 里，不在 host body 里 ——
+             #   那个文件由 `npm run check` 的 node --check 覆盖。）
+             "wakeText: slim ? '' : TPL(WAKE_TEXT)"):
     check("片段仍在: %s" % frag, frag in body)
 
 with io.open(CHK, "w", encoding="utf-8", newline="\n") as f:
