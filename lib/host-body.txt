@@ -39,8 +39,12 @@ const STATE_SCHEMA = 2;
 // 主 agent 的工作区 path ＝ 它的会话 cwd（2026-09-13 迁移）：
 // DSH 沙箱只允许写「会话自己的 cwd」，而 sessionController.create 不允许同时给
 // workspaceId 和 cwd（给了 workspaceId，cwd 就取工作区 path）→ 一个常量管两件事。
-// 旧值（迁移前）：%TEMP%\\dsh-chat-digest\\agent
-const AGENT_CWD = (typeof CF.agentCwd === 'string' && CF.agentCwd) ? CF.agentCwd : STATE_DIR + '\\workspace';
+// A34（2026-09-27）：**缺省改成包内 `agent/`** —— 说明书 `agent/docs/`、工具箱 `agent/tools/`、
+//   产物 `agent/output/` 都在这棵树里，陌生人装完不需要任何包外目录就能开工（以前缺省退到
+//   数据目录下的 workspace，于是说明书和工具箱只能靠部署方自己摆）。
+//   部署方用 `config.agentCwd` 指到自己的目录（例如个人 profile 目录），个人数据就都落那边。
+const AGENT_ROOT = DIR.replace(/[\\/]lib[\\/]?$/, '') + '\\agent';
+const AGENT_CWD = (typeof CF.agentCwd === 'string' && CF.agentCwd) ? CF.agentCwd : AGENT_ROOT;
 //: **默认数据来源目录**（2026-09-25「装完就能用」）：把聊天导出（*.txt / *.md / *.json）丢进这里，
 //:   通用提示词就让它去读这个目录 —— 没有取数管线的人也能端到端跑起来。可用 `config.inboxDir` 覆盖。
 const INBOX_DIR = (typeof CF.inboxDir === 'string' && CF.inboxDir) ? CF.inboxDir : AGENT_CWD + '\\inbox';
