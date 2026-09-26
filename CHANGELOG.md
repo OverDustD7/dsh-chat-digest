@@ -3,6 +3,21 @@
 All notable changes to this package. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.3] — 2026-09-27
+
+### Fixed
+
+- **The panel rebuilt its whole list every 15 seconds, so a click could land on a node that had just
+  been replaced** — pressing a checkbox and releasing over a re-created row fires no `click` at all,
+  which reads as "clicking does nothing / the panel hangs". The panel now compares a data signature
+  and only rebuilds the list when something actually changed; an unchanged refresh just updates the
+  "last collected" line. Measured before: 64 DOM node changes per 16 s, a full list rebuild twice per
+  cycle. After: the list node is left untouched.
+- **`right.js` could keep drawing into a detached list node.** `renderPanel()` guarded mounting with a
+  one-shot `mounted` flag, so if the panel node was ever re-created (which `ensurePanel()` does when
+  the panel is missing or detached), the right column silently went blank or unclickable. Mounting is
+  now re-done whenever the list node changes.
+
 ## [1.3.2] — 2026-09-27
 
 ### Fixed
