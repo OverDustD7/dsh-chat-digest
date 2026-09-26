@@ -33,6 +33,25 @@ def local_dir():
     return d or os.path.join(os.path.dirname(here), "local")
 
 
+def profile():
+    """**个人 profile 目录**：提示词 / 私人值 / 知识库 / 每日产物 全住这里（＝ local_dir 同一个目录）。
+
+    与"通用代码"的分界：`lib/ pipeline/ tools/ docs/` 是通用的、随包发布；
+    profile 目录里的一切都是**某个人的**，重装插件也不该丢 —— 所以它能用 config.localDir /
+    `$DSH_CHAT_FEED_LOCAL` 指到包外面（宿主挂载时会把解析到的值导出到这个环境变量）。
+    """
+    return local_dir()
+
+
+def p(*parts):
+    """拼 profile 下的路径：`p("output", "days")` → `<profile>/output/days`。
+
+    工具的规矩：**通用代码用包内相对路径，个人数据一律走这里** ——
+    不要再出现 `HERE + "output"` 这种把个人数据塞进代码目录的写法。
+    """
+    return os.path.join(profile(), *parts)
+
+
 def _strip(v):
     v = v.split("#")[0].strip()
     if len(v) >= 2 and v[0] == v[-1] and v[0] in ("'", '"'):

@@ -3,6 +3,26 @@
 All notable changes to this package. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] — 2026-09-27
+
+### Added
+
+- **The resident agent's manual and toolbox now ship with the package** (`agent/docs/`, `agent/tools/`).
+  Until now the package carried the plugin plus a copy of the collection pipeline, but everything the
+  agent actually works from — its operating manual and the scripts that write the panel — lived in the
+  author's own checkout, so a fresh install could not run a full round. `agentCwd` now defaults to the
+  package's `agent/` directory, so an install needs no directory outside the package.
+
+### Changed
+
+- The resolved personal directory is exported to child processes as `DSH_CHAT_FEED_LOCAL` (the loader
+  already resolved it; the pipeline and the tools only read the environment), and `pipeline/pconf.py`
+  gained `profile()` / `p()` so every tool locates the personal profile directory the same way.
+- Deployment-specific values that were still hard-coded inside the toolbox moved out: the route gateway,
+  model names and key-variable name now come from the environment (`THU_*` / `PARATERA_*`), the
+  credentials path is resolved from the home directory, and several usage examples no longer name a
+  particular deployment's groups or links.
+
 ## [1.3.4] — 2026-09-27
 
 ### Fixed
