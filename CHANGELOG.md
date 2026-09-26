@@ -3,6 +3,18 @@
 All notable changes to this package. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.1] — 2026-09-27
+
+### Fixed
+
+- **An open panel could stop refreshing.** `openPanel()` used to render only the state it already
+  held in memory, and the 15-second refresh timer was registered at the very end of `boot()` with no
+  error handling — so a throw earlier in boot (or a stale instance whose timer had been cleared) left
+  the panel mounted, populated, and **permanently stale, with nothing shown to the user**. Measured:
+  the server held 30 items while a long-lived tab issued zero requests. Opening the panel now fetches
+  fresh state, the timer is registered before anything else in `boot()`, and the rest of boot is
+  guarded so a failure surfaces on the panel instead of dying silently.
+
 ## [1.3.0] — 2026-09-25
 
 ### Fixed
