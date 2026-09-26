@@ -1,6 +1,6 @@
 {
   "name": "dsh-chat-digest",
-  "version": "1.3.1",
+  "version": "1.3.2",
   "description": "Turn WeChat / QQ chat logs into one panel list that keeps growing, maintained by a resident main-agent session. Ships no ingestion pipeline: feed items over HTTP and the panel grows. Installs as a DSH profile bundle (Cordis plugin).",
   "type": "module",
   "main": "lib/plugin.js",
