@@ -3,6 +3,17 @@
 All notable changes to this package. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.2] — 2026-09-27
+
+### Fixed
+
+- **The right column was not created on a freshly loaded page.** `ensurePanel()` runs during boot, but
+  the host shell has not rendered its center column yet at that point, so it returned early — and the
+  retry path only covered "the panel exists but got detached from the DOM", never "the panel was never
+  created". A freshly loaded page therefore had an empty right column until you clicked the sidebar
+  entry once. Measured: 0 items before the click, 30 after. The sidebar entry row had the same silent
+  failure. Both are now retried, with a bounded counter that resets as soon as both are in place.
+
 ## [1.3.1] — 2026-09-27
 
 ### Fixed
