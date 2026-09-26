@@ -187,6 +187,9 @@ for frag in ("const DIR =", "const WAKE_TEXT =", "apply(ctx)",
              "WAKE_GENERIC", "CF.wakeText", "ROUND_GENERIC", "CF.roundText",
              "## 数据从哪来（默认约定）", "先把 inbox 读完再动手", "别为了加一节去改插件代码", "不要编造数据",
         # 2026-09-25「装完就能用」：inbox 约定 + 没 probeUrl 时跳过探测
+        # A29（2026-09-26 事故）：堵死"多出一个主 agent"的三条不变量
+        "if (!wc || !sc || !ids) return null", "alive !== false",
+        "&& !stored", "create:skip:controllers-missing", "slotsInitWait",
         "const INBOX_DIR", "CF.inboxDir", "inbox: INBOX_DIR", "跳过网关探测",
         "{inbox}", "INBOX_DIR",
              "CF.agentPreset", "CF.agentCwd",
