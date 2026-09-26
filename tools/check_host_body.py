@@ -203,7 +203,16 @@ for frag in ("const DIR =", "const WAKE_TEXT =", "apply(ctx)",
              # A27（2026-09-25）：`routeWhy` 必须报**实际探的那条线**。旧版把这句话写死成 "THU"，
              #   于是探 paratera 成功时 /state 会同时给出 routePick=paratera 与 routeWhy="probe:THU 可达"
              #   —— 自证字段当场自相矛盾（实测 2026-09-25）。配套探针 H23。
-             "'probe:' + probeRes.route"):
+             "'probe:' + probeRes.route",
+
+             # A33（2026-09-27 用户报「勾选的时候卡很久 / 点完要等一秒以上」）：**写盘不阻塞点击**。
+             #   实测：勾选一次 `POST /item` 要 669 毫秒；同样路由换成一个不存在的 id（直接返回、不写盘）
+             #   只要 1〜2 毫秒 ⇒ 那 667 毫秒全在 `saveState()` 里。而裸盘做同样的事只要 1.6 毫秒
+             #   ⇒ 贵的是 **DSH fs 服务的调用次数**（2 次 resolve + 1 读 + 1 解析 + 2 写），不是磁盘。
+             #   两处落地：① 点击路径（toggle/delete/clear-done）改 `saveSoon()` —— 内存先改、`/state`
+             #   立刻反映，落盘单飞+合并；② `saveState()` 不再"读回磁盘 + 解析"上一份（内存里有）。
+             #   丢了这两条，点一下又会回到"等一秒"。
+             "const saveSoon", "saveDirty", "persist: 'queued'", "lastSavedText"):
     check("片段仍在: %s" % frag, frag in body)
 
 with io.open(CHK, "w", encoding="utf-8", newline="\n") as f:

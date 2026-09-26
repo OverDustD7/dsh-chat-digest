@@ -219,6 +219,25 @@ return {
       });
       const race = (p, ms) => Promise.race([Promise.resolve(p).catch(() => null), new Promise((r) => { try { timerSvc.timeout(() => r(null), ms) } catch (e) { r(null) } })]);
 
+      // A33（2026-09-27）：**写盘不再阻塞点击**，且上一份内容不再从磁盘读回。
+      //   实测：勾选一次的 `POST /item` 要 **669 毫秒**；把 id 换成不存在的（host 直接返回、不写盘）
+      //   只要 1〜2 毫秒 —— 那 667 毫秒全在 `saveState()` 里。它每次做 2 次 resolve + 1 读 + 1 解析
+      //   + 2 写，每一步都走 DSH 的 fs 服务；而裸盘做同样的事只要 **1.6 毫秒**（同日实测）
+      //   ⇒ 贵的是**服务调用次数**，不是磁盘。用户报的"点一下要等一秒以上"就是它。
+      //   `saveSoon()`：单飞 + 合并 —— 同时在飞的保存最多一个，期间再有改动就在它结束后补一次，
+      //   所以既不会乱序写、也不会丢掉最后一次。代价：进程正好在这个窗口内被杀会丢最后一次
+      //   改动（几百毫秒的窗口）；这是"点击不卡"换来的，认。
+      let saveDirty = false;
+      let saving = null;
+      let lastSavedText = null;   // null = 还没写过：第一次保存时读一次磁盘，之后直接用内存里那份
+      const saveSoon = () => {
+        saveDirty = true;
+        if (saving) return saving;
+        saving = (async () => {
+          try { while (saveDirty) { saveDirty = false; await saveState() } } finally { saving = null }
+        })();
+        return saving;
+      };
       const saveState = async () => {
         try {
           const payload = { schema: STATE_SCHEMA, sessionId: S.sessionId, mainSessionId: S.mainSessionId, auto: S.auto, autoTime: S.autoTime, lastCollectAt: S.lastCollectAt, seeded: S.seeded, seededFor: S.seededFor, items: S.items,
@@ -263,12 +282,18 @@ return {
           // A18：写前把**上一份有效内容**另存 `.bak`。fs 服务没有 rename/remove，
           //   所以这里只能"读+写"复制（**不搬移、不删除**）。只在上一份能解析时才覆盖 .bak ——
           //   否则会把好备份换成坏内容。
-          let prev = '';
-          try { prev = await fsSvc.readText(await fsSvc.resolve(STATE_FILE)) } catch (e) {}
+          // A33：上一份内容不再"读回磁盘 + 解析"—— 内存里就有上一次写出去的那份（`lastSavedText`）。
+          //   只在**第一次保存**时读一次磁盘，保持 A18 的原意（.bak 存的是上一份**能解析**的内容）。
+          let prev = lastSavedText;
+          if (prev === null) {
+            try { prev = await fsSvc.readText(await fsSvc.resolve(STATE_FILE)) } catch (e) { prev = '' }
+            try { if (prev) JSON.parse(prev) } catch (e) { prev = '' }
+          }
           if (prev) {
-            try { JSON.parse(prev); await fsSvc.writeText(await fsSvc.resolve(STATE_FILE + '.bak'), prev) } catch (e) {}
+            try { await fsSvc.writeText(await fsSvc.resolve(STATE_FILE + '.bak'), prev) } catch (e) {}
           }
           await fsSvc.writeText(await fsSvc.resolve(STATE_FILE), text);
+          lastSavedText = text;
           S.lastSaveOk = true; S.lastError = '';
           return 'saved';
         } catch (e) { noteError('saveState', e); return 'save-fail' }
@@ -1932,9 +1957,11 @@ const ROUND_GENERIC = (date, mode) => [
       routeOk.item = route('POST', 'item', async (body) => {
         const a = body && body.action, id = body && body.id;
         const it = S.items.find((x) => x.id === id);
-        if (a === 'toggle' && it) { it.done = !it.done; return { ok: true, persist: await saveState() } }
-        if (a === 'delete') { S.items = S.items.filter((x) => x.id !== id); return { ok: true, persist: await saveState() } }
-        if (a === 'clear-done') { S.items = S.items.filter((x) => !x.done); return { ok: true, persist: await saveState() } }
+        // A33：面板上的**点击路径**（勾选/删除/清已勾选）一律不等落盘：内存先改，`/state` 立刻反映；
+        //   落盘交给 saveSoon()（单飞 + 合并）。以前这里是 `await saveState()`，实测 669 毫秒。
+        if (a === 'toggle' && it) { it.done = !it.done; saveSoon(); return { ok: true, persist: 'queued' } }
+        if (a === 'delete') { S.items = S.items.filter((x) => x.id !== id); saveSoon(); return { ok: true, persist: 'queued' } }
+        if (a === 'clear-done') { S.items = S.items.filter((x) => !x.done); saveSoon(); return { ok: true, persist: 'queued' } }
         return { ok: false, error: '未知 action' };
       });
       routeOk.tell = route('POST', 'tell', async () => {
