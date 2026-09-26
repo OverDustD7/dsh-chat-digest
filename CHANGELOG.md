@@ -3,6 +3,28 @@
 All notable changes to this package. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.4] — 2026-09-27
+
+### Fixed
+
+- **Ticking an item took about 0.7 s.** Every click on the panel (`toggle` / `delete` / `clear-done`)
+  awaited `saveState()`, which made two `fs` service calls plus a read-back of the previous state file
+  and a JSON parse of it. Measured: a real toggle's `POST /item` took **669 ms**, while the same route
+  with a non-existent id (returns early, writes nothing) took **1–2 ms** — and doing the same read and
+  two writes directly on disk takes **1.6 ms**. So the cost is the number of `fs` service calls, not the
+  disk. Those three actions now update memory and return immediately, handing the write to a
+  single-flight, coalescing background save; and `saveState()` no longer reads the previous file back
+  from disk (it keeps the last written text in memory).
+- **The wake prompt could be injected into the session more than once.** The once-per-session guard was
+  a module variable, so every page reload or plugin re-mount could send the whole wake prompt — which is
+  the *entire* instruction text — into the conversation again, making the resident agent run another
+  turn for nothing. The guard now lives in `localStorage` and is keyed by session id.
+
+### Changed
+
+- Clicking no longer waits for the state file to be written. A process kill inside that few-hundred-
+  millisecond window can lose the last change; a page refresh cannot (the in-memory state is served).
+
 ## [1.3.3] — 2026-09-27
 
 ### Fixed
