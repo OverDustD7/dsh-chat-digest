@@ -137,24 +137,49 @@ better, in your own profile patch (`$DSH_HOME/profiles/<name>/cordis.patch.yml`)
 | Key | Default | Meaning |
 |---|---|---|
 | `bodyPath` | `<package>/lib/host-body.txt` | the authoritative host body; `DSH_CHAT_FEED_BODY` overrides it |
-| `stateDir` | `%LOCALAPPDATA%\dsh-chat-digest` | where `state.json` and `panel.json` live |
-| `agentCwd` | `<stateDir>\workspace` | the resident session's cwd — point it at your pipeline |
+| `stateDir` | `localDir` (the private profile) | where `state.json` and `panel.json` live |
+| `agentCwd` | `localDir` (the private profile) | the resident session's cwd = its **workspace**; that is the write boundary |
 | `dshHome` | `$DSH_HOME`, else `%USERPROFILE%\.dsh` | used to read session titles |
 | `agentPreset` | empty | agent preset to create the sessions with |
 | `routes` | one generic route | `[{ id, label, provider?, model?, effort?, probeUrl?, ctxRatio?, default?, hint? }]`. Two routes is the intended shape; with none configured there is a single route that pins no provider or model, so the session inherits the host default |
-| `localDir` | `<package>/local` | **your private content directory** — see below. When installed from npm the package sits under `node_modules/`, so point this at a directory of your own |
+| `localDir` | `<package>/local` (runtime junction → the private profile) | **your private profile** — see below |
 | `inboxDir` | `<agentCwd>\inbox` | the default data source the built-in prompts tell the agent to read. `{inbox}` in a `local/round.md` expands to it, and it is in `fileRoots` by default |
 | `wxRoot` | **none — set it** | WeChat attachment root — only needed for attachments outside the inbox and `<agentCwd>\output` |
 | `fileRoots` | `[wxRoot, <agentCwd>\output]` | roots allowed for byte serving and "open in the default app" (rejects `..`, absolute paths outside the roots, and UNC) |
 
+### Your private profile (local, never uploaded, survives updates)
+
+Your private things (prompt overrides, private config, products, knowledge base, archive, panel state)
+live in the plugin's own profile directory:
+
+```
+<DSH_HOME>/dsh-chat-digest/           default = %USERPROFILE%\.dsh\dsh-chat-digest
+    pipeline.yaml  pipeline.json      wxid / database keys / group names / paths
+    output/  knowledge/  archive/     products / knowledge base / archive
+    docs/  state.json  panel.json  profile.md
+```
+
+- **Path-wise it is inside the plugin directory**: `<package>/local` (alias `<package>/profile`),
+  `agent/output`, `agent/docs/knowledge` and `agent/docs/archive` are **runtime junctions**, recreated on mount.
+- **Why not inside the package**: `dsh plugin add <package>@<version>` rebuilds the whole package
+  directory, so private files kept there are lost on every update.
+- **Why not somewhere else**: under `~/.dsh` the `*` rule in `~/.dsh/.gitignore` ignores it, and the
+  repository `.gitignore` plus the package `files` whitelist exclude `local`/`profile`/`output`/
+  `knowledge`/`archive`/`state` — three layers, so it is **never uploaded**.
+- **It runs without it**: on a fresh machine the mount seeds what it needs, builds the junctions and
+  writes everything into this directory.
+
 ### Your own prompts
 
-The wake prompt and the per-round instruction are files, not code, and they live outside the repository:
+The wake prompt and the per-round instruction **ship inside the package** (general, full text):
 
-| Where | What | Without it |
-|---|---|---|
-| `localDir/prompt.md` | the prompt that wakes the main agent | a short generic prompt saying this plugin owns only the panel and the resident session |
-| `localDir/round.md` | the per-round instruction (`{date}` and `{mode}` are substituted) | a generic round instruction |
+| Where | What |
+|---|---|
+| `<package>/prompt/prompt.md` | the prompt that wakes the main agent |
+| `<package>/prompt/round.md` | the per-round instruction (`{date}`, `{mode}`, `{agent}`, `{pkg}`, `{profile}`, `{py}`, `{work}` are substituted) |
+
+To use your own wording, drop a `prompt.md` / `round.md` of the same name into your **private profile**;
+it wins. Lookup order = **private profile → `<package>/prompt/` → built-in generic**.
 
 `localDir` resolves in this order: `config.localDir` → `$DSH_CHAT_FEED_LOCAL` → `<package>/local`. The
 directory is `.gitignore`d and excluded from the published `files` whitelist, so private prompts and paths

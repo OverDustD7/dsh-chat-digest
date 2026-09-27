@@ -131,32 +131,56 @@ dsh plugin --profile web add link:/path/to/dsh-chat-digest
 | 键 | 缺省 | 说明 |
 |---|---|---|
 | `bodyPath` | `<包>/lib/host-body.txt` | 权威 Host 函数体；可用 `DSH_CHAT_FEED_BODY` 覆盖 |
-| `stateDir` | `%LOCALAPPDATA%\dsh-chat-digest` | `state.json` 与 `panel.json` 的位置 |
-| `agentCwd` | `<stateDir>\workspace` | 常驻会话的 cwd —— 指到你的取数管线 |
+| `stateDir` | `localDir`（＝私人 profile） | `state.json` 与 `panel.json` 的位置 |
+| `agentCwd` | `localDir`（＝私人 profile） | 常驻会话的 cwd ＝ 它的**工作区**；可写边界就是它 |
 | `dshHome` | `$DSH_HOME`，否则 `%USERPROFILE%\.dsh` | 读会话标题用 |
 | `agentPreset` | 空 | 建会话时带的 agent preset |
 | `routes` | 一条通用线路 | `[{ id, label, provider?, model?, effort?, probeUrl?, ctxRatio?, default?, hint? }]`。两条线是设计形态；不配则只有一条不指定 provider/model 的线路，会话继承宿主默认 |
-| `localDir` | `<包>/local` | **你的私人内容目录**（见下）。从 npm 装进来时包在 `node_modules/` 下，所以指到你自己一个固定目录 |
+| `localDir` | `<包>/local`（运行时联接 → 私人 profile） | **你的私人 profile**；见下 |
 | `inboxDir` | `<agentCwd>\inbox` | 内置提示词让 agent 去读的**默认数据来源**；`local/round.md` 里的 `{inbox}` 就是它，且它默认在 `fileRoots` 里 |
 | `wxRoot` | **无缺省** | 微信附件根 —— 只有当附件在 inbox 与 `<agentCwd>\output` 之外才需要 |
 | `fileRoots` | `[wxRoot, <agentCwd>\output]` | 允许取字节 / 用默认应用打开的根（拒绝 `..`、根外绝对路径、UNC） |
 
+### 私人 profile（本地、不上传、更新不丢）
+
+你的私人东西（提示词覆盖、私有配置、产物、知识库、归档、面板状态）住在**插件自己的 profile 目录**：
+
+```
+<DSH_HOME>/dsh-chat-digest/           缺省 = %USERPROFILE%\.dsh\dsh-chat-digest
+    pipeline.yaml  pipeline.json      wxid / 数据库密钥 / 群名 / 各路径
+    output/  knowledge/  archive/     产物 / 知识库 / 归档
+    docs/  state.json  panel.json  profile.md
+```
+
+- **路径上它就在插件目录里**：`<包>/local`（别名 `<包>/profile`）与 `agent/output`、
+  `agent/docs/knowledge`、`agent/docs/archive` 都是**运行时联接**，挂载时自动重建。
+- **为什么不直接放包里**：`dsh plugin add <包>@<版本>` 会**整体重建包目录**，放里面的私人文件每次更新都没。
+- **为什么不放别处**：放 `~/.dsh` 下（本页默认位置）由 `~/.dsh/.gitignore` 的 `*` 规则忽略，
+  仓库 `.gitignore` 与包的 `files` 白名单也排掉 `local`/`profile`/`output`/`knowledge`/`archive`/`state`
+  —— 三处都挡住，**不会上传**。
+- **缺了它也能跑**：新机器上挂载时会自动播种、自建联接，写入落到这个目录。
+
 ### 你自己的提示词
 
-唤醒提示词与每轮指令是**文件**、不是代码，而且放在仓库之外：
+唤醒提示词与每轮指令的**本体在包里**（通用件，随包发布、全文）：
 
-| 放哪 | 放什么 | 没有它会怎样 |
-|---|---|---|
-| `localDir/prompt.md` | 唤醒主 agent 的提示词 | 一段短短的通用提示词，说明本插件只管面板与常驻会话 |
-| `localDir/round.md` | 每轮的指令（`{date}`、`{mode}` 会被替换） | 一段通用的轮次指令 |
+| 放哪 | 放什么 |
+|---|---|
+| `<包>/prompt/prompt.md` | 唤醒主 agent 的提示词 |
+| `<包>/prompt/round.md` | 每轮的指令（`{date}`/`{mode}`/`{agent}`/`{pkg}`/`{profile}`/`{py}`/`{work}` 会被替换） |
 
-`localDir` 的解析顺序：`config.localDir` → `$DSH_CHAT_FEED_LOCAL` → `<包>/local`。这个目录已被
-`.gitignore` 忽略、也不在发布的 `files` 白名单里 —— 私人提示词与路径**永远不会**进仓库或 npm 包。
+想改成你自己的说法：在**私人 profile** 放一份同名的 `prompt.md` / `round.md` 即覆盖。
+加载顺序 = **私人 profile → `<包>/prompt/` → 内置通用**；三份都不在时退回内置的短提示词。
+
+`localDir` 的解析顺序：`config.localDir` → `$DSH_CHAT_FEED_LOCAL` → `<包>/local`（运行时联接 →
+私人 profile）。私人 profile 已被 `~/.dsh/.gitignore`、仓库 `.gitignore` 与包的 `files` 白名单三处排掉
+—— 私人提示词与路径**永远不会**进仓库或 npm 包。
 
 ## 它写什么、花什么
 
-- **只写状态**，都在 `stateDir` 下：`state.json`（原子写 + 一份 `.bak`；解析失败时把坏件隔离成
-  `.corrupt-<ts>`）与 `panel.json`。不往 `node_modules` 里写，也不改你任何文件；坏件**从不删**。
+- **只写状态**，都在 `stateDir`（缺省＝私人 profile）下：`state.json`（原子写 + 一份 `.bak`；解析失败时
+  把坏件隔离成 `.corrupt-<ts>`）与 `panel.json`。**不往包里写** —— `<包>/local`、`agent/output`、
+  `agent/docs/{knowledge,archive}` 都是运行时联接，真身在私人 profile 里；坏件**从不删**。
 - 旧位置（`%LOCALAPPDATA%\chat-feed\`、`<旧临时目录>\`、`%TEMP%\dsh-chat-digest\`）只作为
   **一次性迁移来源**读一次，读完原样留着。
 - 一轮的花费就是那条线路的 token：它读你的聊天、重写面板。除此之外没有别的开销，也没有遥测。
