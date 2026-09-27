@@ -1,5 +1,4 @@
-【用户点了「获取」】做 **{date}（今天，CST）**的完整一轮。
-**注意：本轮是「自动/补跑」触发的，绝对不许用 `ask_user_question` 阻塞。** 它不弹到前台、用户看不到，这一轮会静默死在那里（2026-09-21 就这么丢掉了一整晚）。拿不准要不要删/要不要改的，写进 `{profile}\output\window\round_state.md` 的「待确认价值」一节 ＋ 收尾回报里，**先按现有规则自行判断，把这一轮做完（取数 → 成稿 → 回写面板）**；只有"用户手动点「获取」"那一轮才允许提问。
+【本轮】做 **{date}（今天，CST）**的一轮。**提问规则由宿主按本轮触发原因注入在本条提示词末尾**（手动点「获取」＝允许问一次；自动/补跑＝禁止阻塞，拿不准的写 `{profile}\output\window\round_state.md` 的「待确认价值」一节 ＋ 收尾回报）。**模板里不写触发原因** —— 2026-09-27 实测：写死的那句会让手动轮也被当成自动轮。
 0) **路由：宿主已探好并选好会话，你只核对与回报** —— `GET /chat-feed/api/state?slim=1` 看 `routePick`/`sessThu`/`sessParatera`/`routeProbe`/`ctxRatioThu`。
    **你被唤醒＝那条线路当时是通的**（不通就不会唤醒你、也不动采集指针）；本轮模式见开头（`pipeline` 只跑管线 / `full` 全轮）。**不弹卡片问他要不要用付费线路**（他多半看不到，且"问"要先唤醒付费会话）。
    `routeProbe` 为 null 或带 `err` ⇒ 自己跑 `{py} {agent}\tools\route_probe.py`，按其结论 `POST /chat-feed/api/route-pick {"route":"thu"|"paratera"}` 纠正后再开工。
