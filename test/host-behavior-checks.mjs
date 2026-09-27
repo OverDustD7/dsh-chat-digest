@@ -9,7 +9,7 @@ const results=[];
 // 路由层通用化（A29）后，切出来的片段会引用这些**外部常量**，而探针作用域里没有它们。
 // 按项目既有约定「定义在片段内」：给每个片段前置一段线路常量。
 // 故意**不**声明 DEFAULT_ROUTE / PROBE_URL —— 那两个本来就是按参数注入的，重名会撞。
-const ROUTE_SHIM = "const ROUTES=[{id:'thu',label:'***REMOVED***',ctxRatio:0.75},{id:'paratera',label:'paratera',ctxRatio:0.5}];"
+const ROUTE_SHIM = "const ROUTES=[{id:'thu',label:'线路1·免费',ctxRatio:0.75},{id:'paratera',label:'paratera',ctxRatio:0.5}];"
   + "const R0='thu',R1='paratera';const routeIds=()=>ROUTES.map(r=>r.id);"
   + "const routeDef=(id)=>ROUTES.find(r=>String(r.id)===String(id))||ROUTES[0];const ctxRatioOf=()=>0.75;\n";
 function chunk(a,b){const start=body.indexOf(a), end=body.indexOf(b,start+a.length);if(start<0||end<0)throw Error(a);return ROUTE_SHIM + body.slice(start,end);}
@@ -194,8 +194,8 @@ function loadStateWith(S, files, stateFile, stateOld, saveCalls) {
         (S.extraMains || []).map((x) => x.id));
 }
 // A27（2026-09-25）：`routeWhy` 必须报**实际探的那条线**。
-//   旧版把"可达/不通"那句话写死成 `'probe:THU 可达'`，探的却是 `probeRes.route`；
-//   于是探 paratera 成功时 `/state` 会同时给出 `routePick=paratera` 与 `routeWhy="probe:THU 可达"`
+//   旧版把"可达/不通"那句话写死成 `'probe:线路1 可达'`，探的却是 `probeRes.route`；
+//   于是探 paratera 成功时 `/state` 会同时给出 `routePick=paratera` 与 `routeWhy="probe:线路1 可达"`
 //   —— 自证字段当场自相矛盾（2026-09-25 实测就是这个值）。
 {
   const S = { busy: false, routePick: 'paratera' };
@@ -208,7 +208,7 @@ function loadStateWith(S, files, stateFile, stateOld, saveCalls) {
     async () => ({ ok: true }), async () => {}, () => '', () => '2026-09-20');
   await trigger('manual', {});
   record('H23_route_why_names_probed_route', { namesProbed: true, namesThu: false },
-         { namesProbed: gotWhy.indexOf('paratera') >= 0, namesThu: gotWhy.indexOf('THU') >= 0 });
+         { namesProbed: gotWhy.indexOf('paratera') >= 0, namesThu: gotWhy.indexOf('线路1') >= 0 });
 }
 fs.writeFileSync(path.join(dir,'host-behavior-results.json'),JSON.stringify(results,null,2));
 console.log(JSON.stringify(results,null,2));

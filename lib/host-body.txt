@@ -112,8 +112,8 @@ const DEMO_ITEMS = [];   // 内置演示数据已清空（2026-09-25）：新装
 // **默认线路（2026-09-18 用户定案：重活一律 paratera）** —— 只在这一处定义。
 //   原先这个"默认"散在三个地方各写一遍 `'thu'`（状态初始化 / pluginProbe 的默认探测目标 /
 //   `/collect` 的兜底），改一处就会与另两处不一致。收敛成一个常量。
-//   为什么是 paratera 而不是 THU：paratera 1M 窗口（实测一轮 0 次压缩）且能读图；
-//   THU 200k 会在轮中压缩一次、丢掉细节，只适合轻活与兜底。
+//   为什么是 paratera 而不是 线路1：paratera 1M 窗口（实测一轮 0 次压缩）且能读图；
+//   线路1 200k 会在轮中压缩一次、丢掉细节，只适合轻活与兜底。
 // ── 线路（**部署方配置**）────────────────────────────────────────────────────
 // `CFG.routes = [{ id, label, provider?, model?, effort?, probeUrl?, ctxRatio?, default? }, …]`
 // **两条线**是这个插件的设计（两个常驻会话按需切换）；只配一条也能跑。
@@ -192,8 +192,8 @@ const S = {
   ctxIdleIntervalMs: 300000, ctxLastProbeAt: 0,
   ctxChecking: false,   // 只在内存：防两个 tick 并发抢着 rotate
 
-  // ---- 双会话（2026-09-17 用户定案：「开一个 THU 的会话，开一个 paratera 的会话，按需切换使用」）----
-  //   为什么不走"会话内 selectModel"（我先做过、被否掉）：同一个会话切到 THU 会撞它 200k 的窗口
+  // ---- 双会话（2026-09-17 用户定案：「开一个 线路1 的会话，开一个 paratera 的会话，按需切换使用」）----
+  //   为什么不走"会话内 selectModel"（我先做过、被否掉）：同一个会话切到 线路1 会撞它 200k 的窗口
   //   （实测该会话已达上下文上限），而且长任务中途换供应商不利于可复现/排错。
   //   ⇒ 两个会话各自带自己的上下文：`sessThu` 新建、上下文小 ⇒ 200k 完全够；`sessParatera` 就是原来那个长会话。
   sessThu: '', sessParatera: '', routePick: DEFAULT_ROUTE, routeAt: 0, routeWhy: '',
@@ -207,9 +207,9 @@ const S = {
   //   ⇒ **手动那条路已经不需要策略了**（2026-09-17 白天）：侧栏「获取」改成下拉，他选哪条线路就现场探哪条
   //     （`POST /collect {route}` → `triggerRound({probeRoute})`），通了才跑、不通只闪红「获取失败」。
   gwPolicy: 'skip', gwDownAt: 0, gwDownReason: '', gwRunAt: 0, gwRunMode: '',
-  // **THU 的刷新阈值**（用户 2026-09-17 指定 0.9；**当晚实测后改成 0.7**）：
+  // **线路1 的刷新阈值**（用户 2026-09-17 指定 0.9；**当晚实测后改成 0.7**）：
   //   DSH 自己的压缩阈值是 **0.8×窗口**（源码 `dsh-compaction-basic` 的 DEFAULT_THRESHOLD_RATIO=.8）
-  //   ⇒ THU 200k 会在 **160k** 就被自动压缩（实测 total=160644 那一刻 compaction/start）。
+  //   ⇒ 线路1 200k 会在 **160k** 就被自动压缩（实测 total=160644 那一刻 compaction/start）。
   //   原来设 0.9（=180k）**比压缩阈值还高 ⇒ 这个自动刷新永远不会触发**，永远是压缩先发生（死参数）。
   //   0.7 = 140k < 160k ⇒ 能在**回合结束的干净边界**先换会话，避免"带着 160k 进下一轮又被压"。
   //   注意：轮换只在**回合结束后**跑（checkCtx 空闲/回合末），所以**回合中途**该压还是会压 —— 那是 DSH 的机制。
@@ -439,13 +439,13 @@ return {
           // ---- 双会话（2026-09-17）----
           // **必须在 saveState 的 payload 里也列上**（这个白名单是显式的：漏一个字段它就只在内存里活，
           //   重启后变回默认值 → 槽空 ⇒ 又去 adopt/create 一个新会话。2026-09-17 实测踩到：
-          //   因为 sessThu/sessParatera 没持久化，**每次重启都重造一个 THU 会话**）。
+          //   因为 sessThu/sessParatera 没持久化，**每次重启都重造一个 线路1 会话**）。
           if (j && typeof j.sessThu === 'string') S.sessThu = j.sessThu;
           if (j && typeof j.sessParatera === 'string') S.sessParatera = j.sessParatera;
           if (j && typeof j.routePick === 'string' && ((typeof ROUTES !== 'undefined' ? routeIds() : ['thu', 'paratera']).indexOf(j.routePick) >= 0)) S.routePick = j.routePick;
           if (j && j.routeAt) S.routeAt = Number(j.routeAt) || 0;
           if (j && typeof j.routeWhy === 'string') S.routeWhy = j.routeWhy;
-          // ⚠ THU 的刷新阈值**必须低于 DSH 自己的压缩阈值 0.8**，否则它永远不会先触发（＝死参数）。
+          // ⚠ 线路1 的刷新阈值**必须低于 DSH 自己的压缩阈值 0.8**，否则它永远不会先触发（＝死参数）。
           //   2026-09-17 晚实测：当时按用户要求设 0.9，而 0.9 > 0.8 ⇒ 永远是 DSH 压缩先发生
           //   （实测 total=162632 那一轮被压掉 66k）。这里把**盘上的旧值夹到 0.75**，免得"代码改了、盘上还是 0.9"。
           if (j && Number(j.ctxRatioThu) > 0 && Number(j.ctxRatioThu) <= 1) S.ctxRatioThu = Math.min(Number(j.ctxRatioThu), 0.75);
@@ -492,7 +492,7 @@ return {
       // 建会话统一入口（2026-09-18）：带上聊天摘要专用 preset（压缩调优版）。
       //   为什么要带：**压缩策略是建会话时定死的**（`SessionHeader.agentPreset` 持久化 +
       //     `assertPresetUnchanged` 事后不许改），用默认 preset 建的会话永远吃 `retainRatio` 0.16
-      //     （THU 200k ⇒ 只逐字保留 32k，压一次就丢细节）。
+      //     （线路1 200k ⇒ 只逐字保留 32k，压一次就丢细节）。
       //   降级保护：preset 服务不可用/查不到/建会话报错 ⇒ **退回不带 preset 再建一次**。
       //     调优是可选件，采集线绝不能因为它整个挂掉；降级只记步骤、不进 `S.lastError`（免得报假警）。
 const AGENT_PRESET = (typeof CF.agentPreset === 'string') ? CF.agentPreset : '';
@@ -766,7 +766,7 @@ const AGENT_PRESET = (typeof CF.agentPreset === 'string') ? CF.agentPreset : '';
         if (sc.rename) {
           // 2026-09-17 下午：**别把"槽"的标题抹平**。`adoptRouteByTitle` 靠标题后缀（＝那条线配置的 `label`）认回会话，
           //   而这里原来**无条件**把当前会话改名成通用标题 ⇒ 槽的标记被抹掉
-          //   （实测：THU 槽 `session-<示例>` 的标题就变成了无后缀的 `聊天摘要 · 主 Agent`，
+          //   （实测：线路1 槽 `session-<示例>` 的标题就变成了无后缀的 `聊天摘要 · 主 Agent`，
           //    侧栏里一行行同名、分不清谁是槽；一旦槽丢了还会因为认不回标题而**再造一个会话**）。
           //   现在：当前会话属于某个槽 ⇒ 用那条线路的标题；否则才用通用标题。
           const slotRoute = (String(S.sessionId) === String(S.sessThu || '')) ? R0
@@ -1046,7 +1046,7 @@ const AGENT_PRESET = (typeof CF.agentPreset === 'string') ? CF.agentPreset : '';
       // 待发引用的"**重新指向**"（2026-09-18 新增）。
       // 病灶：`quote.for` 冻的是**登记那一刻**的会话。如果他先归档了那个会话、插件随后又新建了主会话，
       //   注入段的硬闸门 `scope.id === for` 就永远对不上 ⇒ **引用一个字都进不去**，主 agent 只能回
-      //   "无引用注入"（实测 2026-09-18 21:45：THU 会话 21:45:11 被归档、21:45:29 插件新建了主会话，
+      //   "无引用注入"（实测 2026-09-18 21:45：线路1 会话 21:45:11 被归档、21:45:29 插件新建了主会话，
       //   那一次引用就这么丢了；当时 `qdiag` 一直是空 —— 因为回调里 `S.quote` 压根没被认成有效目标）。
       // **只在「原目标已经死了」时才改判**，且只改指向**本插件刚建出来的那个会话** —— 这个限制是必需的：
       //   2026-09-15 踩过"退回任意 session 形态 ⇒ 引用注进了别的会话（coder 会话）"。
@@ -1266,7 +1266,7 @@ const ROUND_GENERIC = (date, mode) => [
         try { await sc.rename({ sessionId: id, title: routeTitle(route) }); steps.push('rename:ok') } catch (e) { steps.push('rename:err') }
         // **必须先切模型、再灌唤醒文案**（2026-09-17 实测踩到）：灌文案会**立刻起一个 turn**，
         //   而 selectModel 要到"下一次提示词组装"才生效 ⇒ 顺序反了的话，这个新会话的**第一轮会跑在默认线路上**。
-        //   实测后果：THU 会话的第一轮实际发去了 paratera（`request/header reason=initial provider=paratera`），
+        //   实测后果：线路1 会话的第一轮实际发去了 paratera（`request/header reason=initial provider=paratera`），
         //   既花了钱，又让该会话把 `contextWindow` 记成 1,000,000（阈值被算成 0.9×1M=900k，盖住了它真实的 200k）。
         const sm = await setRouteModel(sc, id, route);
         steps.push('model:' + (sm.ok ? (sm.selected.provider + '/' + sm.selected.model) : ('err ' + String(sm.error || ''))));
@@ -1279,7 +1279,7 @@ const ROUND_GENERIC = (date, mode) => [
       };
       // 按标题认领**某条线路**的既有会话（**最新**的那个优先）—— 重启后槽若没持久化（或老版本没存），
       //   靠这个把上次那两个会话认回来，**而不是又新建一个**（2026-09-17 实测：因为槽字段没进白名单，
-      //   每次重启都重造一个 THU 会话，一天就攒出好几个）。`exclude` 用来避免两条线路抢同一个会话。
+      //   每次重启都重造一个 线路1 会话，一天就攒出好几个）。`exclude` 用来避免两条线路抢同一个会话。
       const adoptRouteByTitle = async (wsIds, title, exclude, steps) => {
         const list = (wsIds || []).map(String);
         const skip = (exclude || []).map(String);
@@ -1338,7 +1338,7 @@ const ROUND_GENERIC = (date, mode) => [
         if (changed) {
           S.seeded = false;
           // 换了会话 ⇒ 上下文用量那几个数**必须清零**，否则 /state 会拿**上一个会话**的用量冒充当前会话
-          //（2026-09-17 踩过：切到 THU 会话后仍显示老会话的 ctxWindow=1000000 / ctxLimit=900000）
+          //（2026-09-17 踩过：切到 线路1 会话后仍显示老会话的 ctxWindow=1000000 / ctxLimit=900000）
           S.ctxTokens = 0; S.ctxWindow = 0; S.ctxLimit = 0; S.ctxPct = 0;
         }
         steps.push('active:' + id.slice(0, 12) + (changed ? '(changed)' : '(same)'));
@@ -1349,7 +1349,7 @@ const ROUND_GENERIC = (date, mode) => [
       //   任何 HTTP 响应（含 401/403）都算"网关活着"；5xx / 网络错误 / 超时算"不通"。
       // 2026-09-17 用户要求：「获取」按钮改成下拉菜单、点了哪条线路就**直接探测哪条** ⇒ 这里加 `want` 参数。
       //   · `want` 给了（'thu'/'paratera'）⇒ **只探它**，`out.route` 就是它（通了不通都如实回报，不回退）
-      //   · `want` 没给 ⇒ 老行为：只探 THU，通了 route='thu'、不通 route='paratera'
+      //   · `want` 没给 ⇒ 老行为：只探 线路1，通了 route='thu'、不通 route='paratera'
       const pluginProbe = async (want) => {
         const only = (typeof ROUTES !== 'undefined' && routeIds().indexOf(String(want)) >= 0) ? String(want) : '';
         const target = only || DEFAULT_ROUTE;
@@ -1384,12 +1384,12 @@ const ROUND_GENERIC = (date, mode) => [
         //   现在：成功 ⇒ 就是 target；失败 ⇒ 给"另一条"作为回退提示（调用方另有 gwPolicy 分支）。
         if (!only) out.route = out.ok ? target : (String(target) === String(R1) ? R0 : R1);
         S.routeProbe = out;
-        S.routeNeedsConfirm = !out.ok;      // THU 不通 ⇒ 暂定 paratera，但要主 agent **先问他**（付费线路不许自动切）
+        S.routeNeedsConfirm = !out.ok;      // 线路1 不通 ⇒ 暂定 paratera，但要主 agent **先问他**（付费线路不许自动切）
         await saveState();
         return out;
       };
 
-      // 载入后**尽快把两个会话都备好**（用户 2026-09-17：「开一个 THU 的会话，开一个 paratera 的会话，按需切换使用」）
+      // 载入后**尽快把两个会话都备好**（用户 2026-09-17：「开一个 线路1 的会话，开一个 paratera 的会话，按需切换使用」）
       //   幂等：槽还活着就复用；paratera 槽会认领"现在这个主会话"（那个很长的旧会话），**不会新建**。
       //   不阻塞任何路由：第一次被问 `/state` 时后台起一次（UI 每 10 秒轮询 ⇒ 重启后约 10 秒内两个会话就位）。
       const ensureBothSlots = async () => {
@@ -1415,7 +1415,7 @@ const ROUND_GENERIC = (date, mode) => [
           // **不做自动认领老会话**（2026-09-17 用户选定）：paratera 槽就用它自己那个会话（首次初始化新建的那个，干净、1M 全空）。
           //   那个攒了很久上下文的老会话**留在侧栏不动**（用户可自行归档）—— 想手工挂载就用 `POST /chat-feed/api/route-adopt`。
           await ensureRouteSession(R1, steps);      // 槽空/失效才新建；已有活着的就复用
-          await ensureRouteSession(R0, steps);           // THU 槽：新建一个独立会话（新会话 ⇒ 200k 放得下）
+          await ensureRouteSession(R0, steps);           // 线路1 槽：新建一个独立会话（新会话 ⇒ 200k 放得下）
           S.slotsInitAt = Date.now(); S.slotsInitSteps = steps; S.slotsInitVer = SLOTS_VER;
           if (!S.routePick) S.routePick = R0;
           // 备好之后**把活跃会话对齐到选中的线路**（否则 /state 会出现"routePick=thu 而 sessId 还是 paratera 那个会话"的矛盾）
@@ -1468,7 +1468,7 @@ const ROUND_GENERIC = (date, mode) => [
           if (!pickM || !pickM.ok) return { ok: false, error: (pickM && pickM.error) || '选会话失败', probe: pr0 };
           return await fireRound(sc, reason, pickM, String(o.forceMode || 'full'), pr0);
         }
-        // **双会话：唤醒前先探 THU，再选中该用的那个会话**（2026-09-17 用户定案；不再用会话内 selectModel 换供应商）
+        // **双会话：唤醒前先探 线路1，再选中该用的那个会话**（2026-09-17 用户定案；不再用会话内 selectModel 换供应商）
         const probeRes = o.forceRoute ? { at: Date.now(), ok: (String(o.forceRoute) === String(R0)), status: 0, ms: 0, err: 'manual-force', route: o.forceRoute } : await pluginProbe();
         let mode = String(o.forceMode || 'full');         // 'full' | 'pipeline'
         if (!probeRes.ok) {
@@ -1491,9 +1491,9 @@ const ROUND_GENERIC = (date, mode) => [
           if (!pick2 || !pick2.ok) return { ok: false, error: (pick2 && pick2.error) || '切付费会话失败', probe: probeRes };
           return await fireRound(sc, reason, pick2, mode, probeRes);
         }
-        // A27（2026-09-25）：这句 why 原先**写死"THU"** —— 探的却是 `probeRes.route`。
-        //   于是探 paratera 成功时会报 `routeWhy = "probe:THU 可达"`，而 `routePick = paratera`
-        //   ⇒ 自证字段当场说谎（实测 2026-09-25 /state：routePick=paratera、routeWhy="probe:THU 可达"）。
+        // A27（2026-09-25）：这句 why 原先**写死"线路1"** —— 探的却是 `probeRes.route`。
+        //   于是探 paratera 成功时会报 `routeWhy = "probe:线路1 可达"`，而 `routePick = paratera`
+        //   ⇒ 自证字段当场说谎（实测 2026-09-25 /state：routePick=paratera、routeWhy="probe:线路1 可达"）。
         //   现按**实际探的那条线**报，并配 H23 探针。
         const pick = await pickRoute(probeRes.route, 'probe:' + probeRes.route + (probeRes.ok ? ' 可达' : ' 不通(' + (probeRes.err || probeRes.status) + ')'));
         if (!pick || !pick.ok) return { ok: false, error: (pick && pick.error) || '选会话失败', steps: pick && pick.steps };
@@ -1583,7 +1583,7 @@ const ROUND_GENERIC = (date, mode) => [
           if (p.err) { noteError('ctx-probe', p.err); return null }
           if (!p.tokens) return null;
           S.ctxTokens = p.tokens; S.ctxWindow = p.window || 0; S.ctxChecks = (S.ctxChecks || 0) + 1;
-          // 阈值按**当前会话实际所在的线路**取（不是按 routePick）：THU 用 ctxRatioThu（**0.7**，见上面的注释：
+          // 阈值按**当前会话实际所在的线路**取（不是按 routePick）：线路1 用 ctxRatioThu（**0.7**，见上面的注释：
           //   0.9 会越过 DSH 的压缩线 0.8 ⇒ 死参数），paratera 用 ctxRatio
           const _ratio = ctxRatioOf(routeOfActive());
           S.ctxLimit = p.window > 0 ? Math.floor(p.window * _ratio) : S.ctxFallback;
@@ -1805,7 +1805,7 @@ const ROUND_GENERIC = (date, mode) => [
         ctxLastRotateArchived: String(S.ctxLastRotateArchived || ''), ctxLastRotateErr: String(S.ctxLastRotateErr || ''),
         ctxLastRotateSteps: Array.isArray(S.ctxLastRotateSteps) ? S.ctxLastRotateSteps : [],
         extraMains: Array.isArray(S.extraMains) ? S.extraMains : [], extraMainsAt: Number(S.extraMainsAt || 0),
-        // 双会话自证（2026-09-17）：两个槽 + 当前选中的路线 + 插件侧探测结果 + THU 的刷新阈值
+        // 双会话自证（2026-09-17）：两个槽 + 当前选中的路线 + 插件侧探测结果 + 线路1 的刷新阈值
         routePick: S.routePick || '', inbox: INBOX_DIR, routes: ROUTES.map(function (r) { return { id: r.id, label: r.label, menuName: r.menuName || '', hint: r.hint || '', 'default': !!r['default'] } }),
     routeAt: S.routeAt || 0, routeWhy: S.routeWhy || '',
         activeRoute: routeOfActive(),
@@ -2061,7 +2061,7 @@ const ROUND_GENERIC = (date, mode) => [
         return { ok: true, archived: oldId, sessionId: createdId, sessionTitle: SESSION_TITLE, steps };
       };
 
-      // 「按需切换用哪个会话」（2026-09-17 用户定案：THU 一个会话、paratera 一个会话，按需切换使用）
+      // 「按需切换用哪个会话」（2026-09-17 用户定案：线路1 一个会话、paratera 一个会话，按需切换使用）
       //   POST /chat-feed/api/route-probe           只探（插件侧 fetch 可达性），回结果 + 暂定路线
       //   POST /chat-feed/api/route-pick {route}    切到该路线的会话（该路线没会话就新建 + 灌唤醒文案 + 定模型）
       routeOk.routeProbe = route('POST', 'route-probe', async (body) => {
@@ -2155,7 +2155,7 @@ const ROUND_GENERIC = (date, mode) => [
         const b = body || {};
         if (typeof b.auto === 'boolean') S.ctxAuto = b.auto;
         if (Number(b.ratio) > 0 && Number(b.ratio) <= 1) S.ctxRatio = Number(b.ratio);
-        // THU 单独一个阈值（2026-09-17 晚加）：上限 0.75 —— 再高就越过 DSH 的压缩线（0.8），永远不会触发
+        // 线路1 单独一个阈值（2026-09-17 晚加）：上限 0.75 —— 再高就越过 DSH 的压缩线（0.8），永远不会触发
         if (Number(b.ratioThu) > 0 && Number(b.ratioThu) <= 1) S.ctxRatioThu = Math.min(Number(b.ratioThu), 0.75);
         if (Number(b.fallback) > 0) S.ctxFallback = Number(b.fallback);
         if (Number(b.cooldownMs) >= 0) S.ctxCooldownMs = Number(b.cooldownMs);

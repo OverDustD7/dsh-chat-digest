@@ -80,6 +80,9 @@ GENERIC_OK = {'paratera', 'deepseek', 'overdustd7', 'dsh-chat-digest',
               'project', 'https:', 'http:', 'dsh', 'wxid', 'xwechat', '***REMOVED***-preset'}
 
 
+_CJK_RE = re.compile(r'[\u4e00-\u9fff]')
+
+
 def feed_config(path):
     if not os.path.isfile(path):
         return
@@ -97,22 +100,36 @@ def feed_config(path):
         v = v.strip().strip("'\"").strip().rstrip(',').strip().strip("'\"").strip()
         if not v or v in ('True', 'False', 'None', 'null'):
             continue
-        if len(v) >= 5:
-            T1.add(v)                    # 完整值 = 高危
+        if len(v) >= 5 or _CJK_RE.search(v):
+            T1.add(v)                    # 完整值 = 高危（中文名 2–3 字也算）
         if '\\' in v or '/' in v:
             for seg in v.replace('/', '\\').split('\\'):
                 seg = seg.strip()
-                if len(seg) >= 5 and seg.lower() not in GENERIC_SEG:
+                if (len(seg) >= 5 or _CJK_RE.search(seg)) and seg.lower() not in GENERIC_SEG:
                     T2.add(seg)
 
 
 feed_config(os.path.join(R, 'local', 'pipeline.yaml'))
 feed_config(os.path.join(R, 'local', 'pipeline.json'))
 feed_config(os.path.join(PROFILE, 'cordis.patch.yml'))
-T1 |= set(EXTRA)
 # 通用/公开词不阻断、也不进报数档（否则满屏假阳性，范式 B：收了就虚报）
-T1 = {m for m in T1 if m.lower() not in GENERIC_OK and m.lower() not in GENERIC_SEG and len(m) >= 5}
-T2 = {m for m in T2 if m.lower() not in GENERIC_OK and len(m) >= 5}
+# A50（2026-09-27）修：**含 CJK 的标记不受长度限制**。原来一刀切 `len(m) >= 5`，
+#   把「***REMOVED***」「***REMOVED***」这种 2–3 字的中文姓名整条吃掉 ⇒ 门禁报 T1=0，而包里真有名字
+#   （实测踩过：终验时 T1 说无命中，人工扫才发现 3 处老师真名）。
+def _cjk(t):
+    return any('\u4e00' <= c <= '\u9fff' for c in t)
+
+
+def _keep(m):
+    if m.lower() in GENERIC_OK or m.lower() in GENERIC_SEG:
+        return False
+    return len(m) >= 5 or _cjk(m)
+
+
+T1 = {m for m in T1 if _keep(m)}
+T2 = {m for m in T2 if _keep(m)}
+# 我自己维护的私密标记表（local/personal-tokens.txt）**不裁剪**：写在里面就是要拦的
+T1 |= {m.strip() for m in EXTRA if m.strip() and m.lower() not in GENERIC_OK}
 T2 -= T1
 
 
