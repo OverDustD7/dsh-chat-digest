@@ -22,15 +22,25 @@ _ENV = "DSH_CHAT_FEED_LOCAL"
 
 
 def local_dir():
-    """和插件加载器同一套解析顺序。"""
+    """私人文件夹的解析顺序（与 lib/plugin.js 同一套）：
+    `$DSH_CHAT_FEED_LOCAL` → `<用户 AppData>/dsh-chat-digest`（缺省，插件自己的稳定目录）
+    → 包旁 `local/` → 包内 `pipeline/local/`。
+    为什么缺省不是包内：`dsh plugin add <包>@<版本>` 会整体重建包目录 ⇒ 放包里的私人文件每次更新都没。
+    """
     d = os.environ.get(_ENV) or ""
     if d and os.path.isdir(d):
         return d
     here = os.path.dirname(os.path.abspath(__file__))
-    for cand in (os.path.join(os.path.dirname(here), "local"), os.path.join(here, "local")):
+    cands = []
+    appdata = os.environ.get("LOCALAPPDATA") or os.path.join(
+        os.environ.get("USERPROFILE") or "C:", "AppData", "Local")
+    if appdata:
+        cands.append(os.path.join(appdata, "dsh-chat-digest"))
+    cands += [os.path.join(os.path.dirname(here), "local"), os.path.join(here, "local")]
+    for cand in cands:
         if os.path.isdir(cand):
             return cand
-    return d or os.path.join(os.path.dirname(here), "local")
+    return d or cands[0]
 
 
 def profile():
@@ -142,16 +152,20 @@ def scripts_dir():
 
 
 def work_dir():
-    """管线读写的工作区根：**缺省＝agent_root()**（不填就是"全在插件目录里"）。
+    """管线读写的工作区根：**缺省＝profile()（私人文件夹）**。
     `pipeline.yaml` 的 `work_dir` 只在把产物放到别处时才填。"""
     v = (_Conf_get('work_dir') or '').strip()
-    return v if v else agent_root()
+    return v if v else profile()
 
 
 def python_exe():
     """用哪个解释器跑管线：`pipeline.yaml:python` → 环境变量 `DSH_CHAT_FEED_PY`
-    （宿主会把插件配置里的 `python` 导出到这里）→ 当前解释器。缺省不依赖任何固定路径。"""
+    （宿主会把插件配置里的 `python` 导出到这里）→ 当前解释器。
+    配的那个路径**不存在**就退回当前解释器（只警告，不硬失败）。"""
     v = (_Conf_get('python') or os.environ.get('DSH_CHAT_FEED_PY') or '').strip()
+    if v and not os.path.isfile(v):
+        sys.stderr.write('[pconf] 配的 python 不存在：%s —— 改用当前解释器 %s\n' % (v, sys.executable))
+        v = ''
     return v if v else (sys.executable or 'python')
 
 
@@ -172,6 +186,6 @@ def _Conf_get(key):
 
 
 def out_dir():
-    """产物根：**缺省＝<插件目录>/agent/output**（`pipeline.yaml` 的 `output_dir` 只在放别处时才填）。"""
+    """产物根：**缺省＝<私人文件夹>/output**（`pipeline.yaml` 的 `output_dir` 只在放别处时才填）。"""
     v = (_Conf_get('output_dir') or '').strip()
-    return v if v else os.path.join(agent_root(), 'output')
+    return v if v else os.path.join(profile(), 'output')

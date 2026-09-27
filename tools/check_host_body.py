@@ -218,6 +218,8 @@ for frag in ("const DIR =", "const WAKE_TEXT =", "apply(ctx)",
              #   缺省＝包内 `agent/`（说明书 docs/ + 工具箱 tools/ + 产物 output/ 都在这棵树里）。
              #   丢了这两条，通用提示词又会退回"写死某个人的目录"，别人装完还是跑不起来。
              "const TPL = (s, date, mode)", "{pkg}", "{agent}", "{profile}", "{py}",
+             # A36（2026-09-27）：{agent}＝包内只读骨架；{work}＝会话工作区（私人文件夹）
+             ".replace(/\\{agent\\}/g, AGENT_ROOT)", ".replace(/\\{work\\}/g, AGENT_CWD)",
              "const AGENT_ROOT",
              # A35（2026-09-27）：round 提示词也走 TPL（原来只换 date/mode/inbox，17 个路径占位符原样发出去）。
              "if (tpl) return TPL(tpl, date, mode)",
