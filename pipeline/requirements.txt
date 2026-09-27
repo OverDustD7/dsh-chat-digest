@@ -5,3 +5,5 @@ sqlcipher3-binary  # sqlcipher3（读 WCDB / nt_msg.db）
 pillow             # PIL（图片处理）
 zstandard          # zstandard（微信 4.x 的 zstd 页）
 av                 # av（音视频元数据；不装则对应脚本跳过）
+openpyxl          # read_attachment（.xlsx）
+pypdf             # read_attachment（.pdf）
