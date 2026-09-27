@@ -62,6 +62,42 @@ NT_UTIL = external_tool("nt_msg_db_util", "3.export.py")
 WX_KEY = C.req("wx_key", "微信库解密密钥")
 QQ_KEY = C.req("qq_key", "QQ 库解密密钥")
 QQ_SRC = os.path.join(QQ_DATA_DIR, SELF_QQ, "nt_qq", "nt_db", "nt_msg.db")
+#: A62（2026-09-27 用户定案）：**QQ 源库陈旧/缺失必须看得见**。
+#:   实测 2026-09-19 ~ 09-26 连续 8 天 QQ 0 条，而「2-QQ解密+导出」「2b-QQ结构化导出」
+#:   两步每天都报 `ok` —— 这条支线断了 8 天，报告里一个字都没有。判据只有一个：**源库 mtime**。
+#:   非致命（QQ 只是可选支线）：状态改成 `stale(...)` ⇒ 落进 `bad` ⇒ 记 degraded、写进
+#:   `prep_report.md` 与 `_run.json`，整轮退出码不变。阈值可用 CF_QQ_STALE_DAYS 覆盖。
+QQ_STALE_DAYS = float(os.environ.get("CF_QQ_STALE_DAYS") or 3)
+
+
+def qq_source_state():
+    """返回 (年龄天数 或 None, 一句话状态)。None 表示源库不存在（路径错 / 这台机器没装 QQ）。"""
+    try:
+        age = (time.time() - os.path.getmtime(QQ_SRC)) / 86400.0
+    except OSError:
+        return None, "源库不存在：%s（QQ 那两步是空跑）" % QQ_SRC
+    when = dt.datetime.fromtimestamp(os.path.getmtime(QQ_SRC)).strftime("%Y-%m-%d %H:%M")
+    if age > QQ_STALE_DAYS:
+        return age, "源库已 %.1f 天没更新（最后写入 %s）⇒ QQ 那两步是空跑" % (age, when)
+    return age, "%s（%.1f 天前更新）" % (when, age)
+
+
+def mark_qq_stale(steps, age=None, state=None):
+    """A62：源库陈旧/缺失 ⇒ 把 QQ 那两步的 `ok` 改成 `stale(...)`（返回是否改了）。
+
+    单独成函数只为一件事：**能被验收探针直接调用**（P07）。判据只有一个 —— 源库 mtime。
+    """
+    if age is None and state is None:
+        age, state = qq_source_state()
+    if not ((age is None) or (age > QQ_STALE_DAYS)):
+        return False
+    touched = False
+    for s in steps:
+        if s["step"].startswith(("2-QQ", "2b-QQ")) and s["status"] == "ok":
+            s["status"] = "stale(缺源库)" if age is None else "stale(%.1f天未更新)" % age
+            s["notes"] = list(s.get("notes") or []) + [state]
+            touched = True
+    return touched
 
 
 def hm(ts):
@@ -403,12 +439,19 @@ def main():
                      ["output/days/%s_coverage.md" % date], check_lines=(1, None),
                      critical=False, timeout=300))
 
+    # A62（2026-09-27 用户定案）：QQ 源库陈旧/缺失 ⇒ 把"白跑的那两步"标出来。
+    #   不致命（QQ 是可选支线）：状态改成 stale(...) ⇒ 进 bad ⇒ 记 degraded + 报告写明；退出码不变。
+    qq_age, qq_state = qq_source_state()
+    qq_stale = mark_qq_stale(steps, qq_age, qq_state)
+
     n_msg, tw0, tw1 = day_window(date)
     lines = ["# 每日数据准备报告 · %s" % date, "",
              "- 生成时间：%s" % dt.datetime.now(TZ).strftime("%Y-%m-%d %H:%M:%S CST"),
              "- 窗口起点 epoch：%d（= %s 00:00 CST）" % (start, date),
              "- **数据窗口自证：%s ~ %s（%d 条）** ← 这一天实际取到哪，一眼可见（2026-09-15 立）" % (tw0, tw1, n_msg),
-             "- **微信登录态：%s** ← 未登录时第 4/3j 步（图片线）必停，那不是脚本错误（2026-09-15 立）" % wx_login_line(), "",
+             "- **微信登录态：%s** ← 未登录时第 4/3j 步（图片线）必停，那不是脚本错误（2026-09-15 立）" % wx_login_line(),
+             "- **QQ 数据源：%s** ← %s（A62：源库 mtime 超 %.0f 天就记 stale，逐项见下表）"
+             % ("陈旧" if qq_stale else "正常", qq_state, QQ_STALE_DAYS), "",
              "| 步骤 | 状态 | 耗时 | 备注 |", "|---|---|---|---|"]
     for s in steps:
         lines.append("| %s | %s | %ss | %s |" % (s["step"], s["status"], s["seconds"],

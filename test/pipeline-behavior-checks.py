@@ -38,7 +38,7 @@ with contextlib.redirect_stdout(buf):
     record('P02_stale_artifact_rejected',True,res['status']!='ok')
     # Current orchestrator with every external step mocked failed: its process-success result remains None.
     tmp=OUT/'fixtures/daily';tmp.mkdir(parents=True,exist_ok=True)
-    env=dict(sys=types.SimpleNamespace(argv=['daily_prep.py','2026-09-20']),dt=dt,TZ=dt.timezone(dt.timedelta(hours=8)),os=os,HERE=str(tmp),SCRIPTS=str(tmp),VENV_PY='python',NT_UTIL='export.py',WX_KEY='synthetic',QQ_KEY='synthetic',QQ_SRC='synthetic',run=lambda label,*a,**k:dict(step=label,status='FAILED',seconds=0,notes=[]),img_key_note=lambda _:[],check_url_coverage=lambda _:('CHECK-FAILED',[]),day_window=lambda _:(0,'?','?'),wx_login_line=lambda :'synthetic',MAIN_GROUP='synthetic')
+    env=dict(sys=types.SimpleNamespace(argv=['daily_prep.py','2026-09-20']),dt=dt,TZ=dt.timezone(dt.timedelta(hours=8)),os=os,HERE=str(tmp),SCRIPTS=str(tmp),VENV_PY='python',NT_UTIL='export.py',WX_KEY='synthetic',QQ_KEY='synthetic',QQ_SRC='synthetic',run=lambda label,*a,**k:dict(step=label,status='FAILED',seconds=0,notes=[]),img_key_note=lambda _:[],check_url_coverage=lambda _:('CHECK-FAILED',[]),day_window=lambda _:(0,'?','?'),wx_login_line=lambda :'synthetic',MAIN_GROUP='synthetic',QQ_STALE_DAYS=3.0,qq_source_state=lambda:(0.1,'synthetic'),mark_qq_stale=lambda *a,**k:False)
     rc=function(CI/'daily_prep.py','main',env)()
     record('P03_all_steps_fail_nonzero_exit',True,isinstance(rc,int) and rc!=0)
     # Export unknown ids against a synthetic existing deliverable.
@@ -83,5 +83,21 @@ with contextlib.redirect_stdout(buf):
     env=dict(HEADER_SIZE=1024,pathlib=pathlib)
     function(CI/'qq_decrypt_hex.py','strip_header',env)(src,dst)
     record('P06_same_size_qq_cache_refreshed',True,dst.read_bytes()==b'new-content')
+    # A62（2026-09-27 用户定案）：**QQ 源库陈旧/缺失不许再报 ok**。
+    #   实测 2026-09-19~09-26 连续 8 天 QQ 0 条，而「2-QQ解密+导出」「2b-QQ结构化导出」
+    #   两步每天报 `ok` —— 这条支线断了 8 天，报告里一个字都没有。判据：源库 mtime。
+    env=dict(QQ_STALE_DAYS=3.0)
+    mark=function(CI/'daily_prep.py','mark_qq_stale',env)
+    def _steps():
+        return [dict(step='1-微信DB解密',status='ok',notes=[]),
+                dict(step='2-QQ解密+导出',status='ok',notes=[]),
+                dict(step='2b-QQ结构化导出',status='ok',notes=[])]
+    s_stale=_steps(); hit=mark(s_stale,9.6,'源库已 9.6 天没更新')
+    s_fresh=_steps(); miss=mark(s_fresh,0.1,'刚更新过')
+    s_gone=_steps(); gone=mark(s_gone,None,'源库不存在')
+    record('P07_stale_qq_source_marks_steps',
+           {'stale':True,'qq':'stale(9.6天未更新)','wx_untouched':'ok','fresh':False,'missing':'stale(缺源库)'},
+           {'stale':hit,'qq':s_stale[1]['status'],'wx_untouched':s_stale[0]['status'],
+            'fresh':miss,'missing':s_gone[1]['status']})
 (OUT/'pipeline-behavior-results.json').write_text(json.dumps(results,ensure_ascii=False,indent=2),encoding='utf-8')
 print(json.dumps(results,ensure_ascii=False,indent=2))
