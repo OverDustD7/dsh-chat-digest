@@ -210,5 +210,49 @@ function loadStateWith(S, files, stateFile, stateOld, saveCalls) {
   record('H23_route_why_names_probed_route', { namesProbed: true, namesThu: false },
          { namesProbed: gotWhy.indexOf('paratera') >= 0, namesThu: gotWhy.indexOf('线路1') >= 0 });
 }
+// A61（2026-09-27 用户定案 A）：**会话 cwd 必须是它的工作区根**，否则判死、另建、把旧的退掉。
+//   为什么：DSH 的可写根＝canonical(会话 cwd)（`dsh-sandbox-policy` 的 resolveWorkspaceRoot），
+//   而写放行看**目标的 realpath**（`dsh-fs-sandbox` 的 checkedTarget）；插件目录里 `agent/output`、
+//   `agent/docs/{knowledge,archive}` 是**联接**，realpath 落在私人 profile 里 ⇒ 会话 cwd 不是私人
+//   profile（对外＝`<包>/local`）时主 agent 写产物必被拒。实测 2026-09-27 12:02:59（cwd＝包内 agent/）：
+//   `SAVE-FAILED(PermissionError: [Errno 13] … \agent\output\logs\_last_http.json)`。
+//   而 DSH **不许改**会话 cwd（`ensureSession` 末端无条件比对 header.cwd ⇒ ApiSessionCwdConflict）
+//   ⇒ 唯一出路是不复用它。拿不到 cwd 时必须**放行**（fail-open）—— 存疑判死会重演 A29 那两个主 agent。
+{
+  const PKG='C:\\pkg', PRIV='C:\\priv\\profile', LOCAL=PKG+'\\local';
+  const fsSvc={resolve:async(p)=>({targetKey: p===LOCAL ? PRIV : String(p)})};
+  const S={sessionId:'session-NEW',mainSessionId:'session-NEW',sessThu:'',sessParatera:''};
+  const archived=[];
+  const ctxStub={get:(n)=> n==='workspaceController'
+    ? {archiveSession:async(r)=>{archived.push(r.sessionId);return {}}} : undefined};
+  const src=chunk('const cwdCanon = async (p) => {','//: DSH 家的位置')
+    +'return {checkUsable,noteCwdStale,retireCwdStale};';
+  const build=(metaOf,sumOf)=>new Function('fsSvc','ctx','S','AGENT_CWD','sessionMeta','sessionSummary','saveState',src)(
+    fsSvc,ctxStub,S,LOCAL,async(f,id)=>metaOf[id],async(sc,id)=>sumOf[id],async()=> 'saved');
+  // ① 成员表里"活着"，但 cwd 还是旧的那棵树（包内 agent/）⇒ 判 stale
+  const A=build({'session-A':{title:'M',cwd:PKG+'\\agent'}},{});
+  const r1=await A.checkUsable({},'session-A',[],['session-A'],[]);
+  // ② cwd 正确（＝工作区根 `<包>/local` 的 canonical）⇒ 照旧 alive
+  const B=build({'session-B':{title:'M',cwd:LOCAL}},{});
+  const r2=await B.checkUsable({},'session-B',[],['session-B'],[]);
+  // ③ 拿不到 cwd（投影缓存读不到）⇒ 放行（不能因为"看不见"就判死）
+  const C=build({},{});
+  const r3=await C.checkUsable({},'session-C',[],[],[]);
+  // ④ 走 sc.list() 那条路（成员表拿不到）时同样判
+  const D=build({},{'session-D':{sessionId:'session-D',cwd:'D:\\old\\ws'}});
+  const r4=await D.checkUsable({},'session-D',[],[],[]);
+  record('H24_session_cwd_must_be_workspace_root',
+         {mismatch:false,match:true,unknown:true,listMismatch:false},
+         {mismatch:!!r1.alive,match:!!r2.alive,unknown:!!r3.alive,listMismatch:!!r4.alive});
+  // ⑤ 有了可用的新会话之后，因 cwd 被弃用的那些**归档掉**，并清掉还指着它的槽/锚点
+  S.sessParatera='session-A';
+  const A2=build({'session-A':{title:'M',cwd:PKG+'\\agent'}},{});
+  await A2.checkUsable({},'session-A',[],['session-A'],[]);
+  const steps=[];
+  const n=await A2.retireCwdStale(steps,['session-NEW']);
+  record('H25_cwd_stale_session_retired',
+         {archived:['session-A'],paratera:'',retired:1},
+         {archived:archived,paratera:String(S.sessParatera),retired:n});
+}
 fs.writeFileSync(path.join(dir,'host-behavior-results.json'),JSON.stringify(results,null,2));
 console.log(JSON.stringify(results,null,2));
