@@ -33,7 +33,7 @@ from collections import Counter, defaultdict
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 HERE = agent_root()
-DOCS = os.path.join(HERE, "docs", "knowledge")
+DOCS = os.path.join(HERE, "knowledge")
 TZ = dt.timezone(dt.timedelta(hours=8))
 OUT = os.path.join(DOCS, "official_accounts.md")
 

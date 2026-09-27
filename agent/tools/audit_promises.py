@@ -16,12 +16,14 @@ import argparse
 import glob
 import io
 import os
+from profile_paths import profile_root
+PROFILE = profile_root()
 import re
 import sys
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DOCS = os.path.join(HERE, "docs")
+DOCS = os.path.join(PROFILE, "docs")
 
 TIER1 = re.compile(r"未实现|未做|尚未|待补|待接入|待实现|未接进|未纳入|没纳入|未验证|待验证|TODO|待定|待修|还没|待建|未建")
 TIER2 = re.compile(r"建议|应该|计划|下次|以后|将来|待确认")
@@ -36,7 +38,7 @@ FILES = ["MAIN_AGENT_SPEC.md", "agent/WORKING.md", "output_format.md", "guidelin
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--out", default=os.path.join(HERE, "output", "window", "_promises_audit.md"))
+    ap.add_argument("--out", default=os.path.join(PROFILE, "output", "window", "_promises_audit.md"))
     a = ap.parse_args()
 
     hits, t2 = [], {}

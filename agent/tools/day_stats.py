@@ -9,6 +9,8 @@ import datetime as dt
 import io
 import json
 import os
+from profile_paths import profile_root
+PROFILE = profile_root()
 import re
 import sys
 
@@ -26,7 +28,7 @@ def hm(ts):
 
 
 rows = []
-for line in io.open(os.path.join(HERE, "output", "days", "%s.jsonl" % DATE),
+for line in io.open(os.path.join(PROFILE, "output", "days", "%s.jsonl" % DATE),
                     encoding="utf-8", errors="replace"):
     line = line.strip()
     if line:
@@ -67,7 +69,7 @@ tot_eff = sum(b["eff"] for b in by.values())
 print("\n合计有效消息 %d 条（%d 个会话）｜ 按 300–350 条/组 → 约 %d 组"
       % (tot_eff, len(by), max(1, round(tot_eff / 325))))
 
-img = os.path.join(HERE, "output", "days", "%s_images.json" % DATE)
+img = os.path.join(PROFILE, "output", "days", "%s_images.json" % DATE)
 if os.path.exists(img):
     j = json.load(io.open(img, encoding="utf-8"))
     n = len(j) if isinstance(j, list) else len(j.get("items") or j.get("images") or [])

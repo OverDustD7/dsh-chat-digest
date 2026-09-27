@@ -17,6 +17,8 @@ import datetime as dt
 import io
 import json
 import os
+from profile_paths import profile_root
+PROFILE = profile_root()
 import sys
 
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
@@ -40,7 +42,7 @@ URG_RANK = {'today': 0, 'week': 1, 'later': 2}
 #   "同一轮"的判据＝距上次 `--clear-new` 不超过 SAME_ROUND_HOURS。一轮实测 10 分钟内跑完，
 #   手动轮与 23:30 自动轮相隔十几小时 —— 这个窗口不会把两轮误判成一轮。
 #   要拿回"全清"语义（真的换了新的一天/新的一轮）用 `--force-clear-new`。
-STAMP = os.path.join(HERE, 'output', 'window', '.clear_new_stamp.json')
+STAMP = os.path.join(PROFILE, 'output', 'window', '.clear_new_stamp.json')
 SAME_ROUND_HOURS = 3
 
 
@@ -112,7 +114,7 @@ def main(argv=None):
                          '第 2 次把第 1 次的 4 条【新】全清了')
     args = ap.parse_args(argv)
 
-    path = args.new_items if os.path.isabs(args.new_items) else os.path.join(HERE, args.new_items)
+    path = args.new_items if os.path.isabs(args.new_items) else os.path.join(PROFILE, args.new_items)
     with io.open(path, encoding='utf-8') as fh:
         raw = json.load(fh)
     if isinstance(raw, dict):

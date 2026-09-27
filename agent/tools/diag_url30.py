@@ -11,6 +11,8 @@ import datetime as dt
 import io
 import json
 import os
+from profile_paths import profile_root
+PROFILE = profile_root()
 import re
 import sqlite3
 import sys
@@ -46,7 +48,7 @@ def urls_of(blob, out):
 
 
 # ---------- A. 现行产物 ----------
-cur = os.path.join(HERE, "output", "window", "all_urls.jsonl")
+cur = os.path.join(PROFILE, "output", "window", "all_urls.jsonl")
 a_rows = []
 if os.path.exists(cur):
     with io.open(cur, encoding="utf-8") as f:
@@ -63,7 +65,7 @@ print("   落在 %s 当天=%d 行，唯一URL=%d" % (DATE, len(a_on_day), len({r
 print("   当天最大 ts=%s" % (fmt(max((int(r['ts']) for r in a_on_day), default=0))))
 
 # ---------- B. 当天 jsonl ----------
-dayp = os.path.join(HERE, "output", "days", "%s.jsonl" % DATE)
+dayp = os.path.join(PROFILE, "output", "days", "%s.jsonl" % DATE)
 b_urls, b_msgs, b_min, b_max, b_src = set(), 0, None, 0, {}
 for line in io.open(dayp, encoding="utf-8", errors="replace"):
     line = line.strip()
@@ -86,7 +88,7 @@ print("   唯一URL=%d（text/raw 截断：2000/6000）" % len(b_urls))
 
 # ---------- C. QQ 库当天全量（不截断） ----------
 c_urls = set(b_urls)
-con = sqlite3.connect(os.path.join(HERE, "output", "qq", "nt_msg_export.db"))
+con = sqlite3.connect(os.path.join(PROFILE, "output", "qq", "nt_msg_export.db"))
 n_qq = 0
 for text, content in con.execute(
         "SELECT text, content FROM group_messages WHERE timestamp >= ? AND timestamp < ?",

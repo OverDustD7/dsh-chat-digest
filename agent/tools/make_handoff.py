@@ -14,6 +14,7 @@ import os
 import re
 import sys
 import datetime as dt
+from profile_paths import profile_root
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # agent 根
@@ -22,7 +23,7 @@ CI_PIPE = os.path.join(os.path.dirname(CI), "pipeline")   # A35：取数脚本�
 CF = os.path.join(ROOT, "chat-feed")
 TZ = dt.timezone(dt.timedelta(hours=8))
 FORCE = "--force" in sys.argv
-OUT = os.path.join(ROOT, "HANDOFF-2026-09-15-CHATFEED.md")
+OUT = os.path.join(profile_root(), "HANDOFF-2026-09-15-CHATFEED.md")
 
 # --- 护栏：**默认拒绝覆盖**（不要用"目标比脚本旧"这类启发式）---
 # 2026-09-15 实测事故：第一版护栏比较 mtime，而我刚编辑过本脚本 → 判定"目标更旧" → 直接写入，

@@ -19,6 +19,8 @@ r"""zcode_prep.py —— 给 ZCode 闲时任务备料：核对输入、补齐分
 import datetime as dt
 import io
 import os
+from profile_paths import profile_root
+PROFILE = profile_root()
 import re
 import subprocess
 import sys
@@ -26,9 +28,9 @@ import sys
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DAYS = os.path.join(HERE, "output", "days")
-ZC = os.path.join(HERE, "output", "zcode")
-GEN = os.path.join(HERE, "docs", "zcode", "IDLE-TASK-EXTRACT.md")
+DAYS = os.path.join(PROFILE, "output", "days")
+ZC = os.path.join(PROFILE, "output", "zcode")
+GEN = os.path.join(PROFILE, "docs", "zcode", "IDLE-TASK-EXTRACT.md")
 PY = sys.executable
 
 # 必须有这些才算"够提炼"（缺一个就拒绝——尤其 units/slices，那是全覆盖的载体）

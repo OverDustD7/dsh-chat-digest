@@ -13,6 +13,8 @@ import argparse
 import io
 import json
 import os
+from profile_paths import profile_root
+PROFILE = profile_root()
 import re
 import time
 import urllib.request
@@ -66,7 +68,7 @@ def main():
     ap.add_argument("--slice", default=os.path.join("output", "days", "2026-09-14_slice01_units.md"))
     ap.add_argument("--model", default="qwen3.5:9b")
     a = ap.parse_args()
-    p = a.slice if os.path.isabs(a.slice) else os.path.join(HERE, a.slice)
+    p = a.slice if os.path.isabs(a.slice) else os.path.join(PROFILE, a.slice)
     if not os.path.exists(p):
         print("缺切片：%s" % p)
         return 2
@@ -92,7 +94,7 @@ def main():
     for it in items:
         print("  [%-8s] %s  ｜ %s" % (it.get("kind"), str(it.get("head"))[:46], str(it.get("why"))[:34]))
     # 与 09-14 基线对照（关键词层面）
-    base = os.path.join(HERE, "output", "daily", "2026-09-14", "items.json")
+    base = os.path.join(PROFILE, "output", "daily", "2026-09-14", "items.json")
     if os.path.exists(base):
         B = json.load(io.open(base, encoding="utf-8"))
         print("\n对照 DSH 09-14 基线（%d 条）——看它们在这段里有没有东西是基线报过的：" % len(B))

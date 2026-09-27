@@ -13,6 +13,8 @@ import collections
 import io
 import json
 import os
+from profile_paths import profile_root
+PROFILE = profile_root()
 import re
 import sys
 
@@ -28,7 +30,7 @@ def main():
     args = [a for a in sys.argv[1:] if a]
     date = args[0] if args else "2026-09-13"
     key = args[1] if len(args) > 1 else ""   # 群名是私人值：命令行给，或填 <个人目录>/pipeline.yaml
-    p = os.path.join(HERE, "output", "days", "%s_units.md" % date)
+    p = os.path.join(PROFILE, "output", "days", "%s_units.md" % date)
     buckets = collections.defaultdict(lambda: [0, 0])   # 桶 -> [条数, 字符]
     emo = [0, 0]
     info = [0, 0]
@@ -59,7 +61,7 @@ def main():
     print("  情绪/寒暄型（可折叠）：%d 条 ｜ %d 字符（%.1f%% 的字符）" % (emo[0], emo[1], 100.0 * emo[1] / max(1, total[1])))
     print("  含数字/链接/关键词（疑似有信息）：%d 条 ｜ %d 字符" % (info[0], info[1]))
     # 原始 jsonl 的 type 分布
-    q = os.path.join(HERE, "output", "days", "%s.jsonl" % date)
+    q = os.path.join(PROFILE, "output", "days", "%s.jsonl" % date)
     tc = collections.Counter()
     for line in io.open(q, encoding="utf-8", errors="replace"):
         line = line.strip()

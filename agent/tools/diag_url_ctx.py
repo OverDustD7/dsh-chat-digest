@@ -3,6 +3,8 @@
 import io
 import json
 import os
+from profile_paths import profile_root
+PROFILE = profile_root()
 import re
 import sys
 
@@ -11,7 +13,7 @@ HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 NEEDLE = sys.argv[1] if len(sys.argv) > 1 else "http://mmbiz.qpi"
 DAY = sys.argv[2] if len(sys.argv) > 2 else "2026-09-12"
 
-p = os.path.join(HERE, "output", "days", "%s.jsonl" % DAY)
+p = os.path.join(PROFILE, "output", "days", "%s.jsonl" % DAY)
 shown = 0
 for line in io.open(p, encoding="utf-8", errors="replace"):
     line = line.strip()

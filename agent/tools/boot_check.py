@@ -21,6 +21,8 @@ import datetime
 import io
 import json
 import os
+from profile_paths import profile_root
+PROFILE = profile_root()
 import re
 import sys
 
@@ -92,7 +94,7 @@ def main():
                 it.get("kind"), it.get("urgency"), (it.get("text") or "")[:46], it.get("date")))
 
     section("断档")
-    days_dir = os.path.join(ROOT, "output", "days")
+    days_dir = os.path.join(PROFILE, "output", "days")
     dates = sorted({
         re.match(r"(\d{4}-\d{2}-\d{2})", n).group(1)
         for n in os.listdir(days_dir)
@@ -133,10 +135,10 @@ def main():
         print("  （细查 `python tools\\wx_status.py`；完整 JSON 落 `output\\logs\\_wx_status.json`）")
 
     section("产出一览")
-    daily = os.path.join(ROOT, "output", "daily")
+    daily = os.path.join(PROFILE, "output", "daily")
     if os.path.isdir(daily):
         print("output\\daily: %s" % (", ".join(sorted(os.listdir(daily))) or "(空)"))
-    docs = os.path.join(ROOT, "docs")
+    docs = os.path.join(PROFILE, "docs")
     sums = sorted(n for n in os.listdir(docs) if n.startswith("summary_"))
     print("docs\\summary_*: %s" % (", ".join(sums[-5:]) or "(无)"))
     return 0

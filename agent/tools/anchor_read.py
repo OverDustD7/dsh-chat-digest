@@ -15,17 +15,19 @@ import argparse
 import glob
 import io
 import os
+from profile_paths import profile_root
+PROFILE = profile_root()
 import re
 import sys
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DAYS = os.path.join(HERE, "output", "days")
+DAYS = os.path.join(PROFILE, "output", "days")
 DEFAULT_KW = "作业|截止|提交|上交|ddl|DDL|报名|小测|考试|第\d+页|问卷|招募|征集|志愿者|选拔|观众|接龙|收集表|报名表|自主报名|填写|调研"
 
 
 def resolve(name):
-    for cand in (name, os.path.join(HERE, name), os.path.join(DAYS, name)):
+    for cand in (name, os.path.join(PROFILE, name), os.path.join(DAYS, name)):
         if os.path.exists(cand):
             return cand
     hit = glob.glob(os.path.join(DAYS, "*%s*" % name))

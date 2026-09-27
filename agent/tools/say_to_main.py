@@ -13,9 +13,11 @@ import io
 import json
 import os
 import sys
+from profile_paths import profile_root
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PROFILE = profile_root()
 CF_API = os.path.join(HERE, "docs", "agent", "cf_api.py")
 
 spec = importlib.util.spec_from_file_location("cf_api", CF_API)
@@ -29,7 +31,7 @@ if not argv:
     print(__doc__)
     sys.exit(2)
 
-path = argv[0] if os.path.isabs(argv[0]) else os.path.join(HERE, argv[0])
+path = argv[0] if os.path.isabs(argv[0]) else os.path.join(PROFILE, argv[0])
 text = io.open(path, encoding="utf-8").read().strip()
 if not text:
     print("文本为空，不发")

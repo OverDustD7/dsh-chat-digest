@@ -21,6 +21,8 @@ import argparse
 import io
 import json
 import os
+from profile_paths import profile_root
+PROFILE = profile_root()
 import re
 import sys
 import time
@@ -65,7 +67,7 @@ def body(t):
 
 
 def load_units(date, chat=None):
-    p = os.path.join(HERE, "output", "days", "%s_units.md" % date)
+    p = os.path.join(PROFILE, "output", "days", "%s_units.md" % date)
     out = []
     for ln in io.open(p, encoding="utf-8", errors="replace"):
         ln = ln.rstrip("\n")
@@ -108,7 +110,7 @@ def ask(batch_lines, timeout=180, nudge=False):
             if keep:
                 return keep, dt, txt
         try:   # 解析不了就把模型原文落盘，便于诊断（曾经"三批全 fail-open"就是这么查出来的）
-            io.open(os.path.join(HERE, "output", "window", "_llm_last_raw.txt"), "w",
+            io.open(os.path.join(PROFILE, "output", "window", "_llm_last_raw.txt"), "w",
                     encoding="utf-8", newline="\n").write(
                 (txt or "(空回复)") + "\n\n[thinking] " + str(((j.get("message") or {}).get("thinking") or ""))[:500])
         except Exception:
@@ -137,7 +139,7 @@ def main():
     a = ap.parse_args()
     MODEL, BATCH = a.model, a.batch
 
-    units_p = os.path.join(HERE, "output", "days", "%s_units.md" % a.date)
+    units_p = os.path.join(PROFILE, "output", "days", "%s_units.md" % a.date)
     if not os.path.exists(units_p):
         # A17：**前提缺失 = failed**（不是空状态）。旧版这里直接 open() 抛栈，
         # 退出码虽然非零，但报错看不出是"前提没跑"还是"脚本坏了"。
@@ -153,7 +155,7 @@ def main():
         # A17：**0 条是合法空状态 empty，不是失败**（当天该群确实没消息 / 全是噪音）。
         # 旧版 return 1 → 09-19、09-20 被记成 FAILED（假失败）。仍写出（空的）产物，
         # 免得 daily_prep 再因 "MISSING" 判一次失败。
-        out0 = a.out or os.path.join(HERE, "output", "days", "%s_units_filtered.md" % a.date)
+        out0 = a.out or os.path.join(PROFILE, "output", "days", "%s_units_filtered.md" % a.date)
         io.open(out0, "w", encoding="utf-8", newline="\n").write("")
         print("当天无单元可筛（合法空状态 empty，非失败）；已写出空产物 %s" % out0)
         return 0
@@ -174,7 +176,7 @@ def main():
             k, dt, raw = None, 0.0, "ERR:%s" % e
         total_s += dt
         try:   # 每批都把模型原文落盘 —— 诊断"为什么全丢/全留"必须有它
-            io.open(os.path.join(HERE, "output", "window", "_llm_last_raw.txt"), "w",
+            io.open(os.path.join(PROFILE, "output", "window", "_llm_last_raw.txt"), "w",
                     encoding="utf-8", newline="\n").write("[batch %d-%d]\n%s" % (s + 1, s + len(chunk), str(raw)))
         except Exception:
             pass
@@ -208,10 +210,10 @@ def main():
             else:
                 dropped.append(t)
         print("  batch %3d-%3d  留 %2d/%2d  %.1fs" % (s + 1, s + len(chunk), len(k), len(chunk), dt))
-    out = a.out or os.path.join(HERE, "output", "days", "%s_units_filtered.md" % a.date)
+    out = a.out or os.path.join(PROFILE, "output", "days", "%s_units_filtered.md" % a.date)
     io.open(out, "w", encoding="utf-8", newline="\n").write(
         "\n".join("- " + t for t in kept) + "\n")
-    dout = (a.out + ".dropped") if a.out else os.path.join(HERE, "output", "days", "%s_units_dropped.md" % a.date)
+    dout = (a.out + ".dropped") if a.out else os.path.join(PROFILE, "output", "days", "%s_units_dropped.md" % a.date)
     io.open(dout, "w", encoding="utf-8", newline="\n").write(
         "\n".join("- " + t for t in dropped) + "\n")
     print("KEPT %d / %d  (drop %.1f%%)  chars %d -> %d (-%.1f%%)  rescued %d  fail-open %d batch  total %.1fs"

@@ -18,6 +18,8 @@ import datetime as dt
 import difflib
 import io
 import os
+from profile_paths import profile_root
+PROFILE = profile_root()
 import re
 import sys
 from collections import defaultdict
@@ -170,7 +172,7 @@ def main():
         out.append("- %s %s[%s] %s: %s%s" % (hm, (u["tag"] + " ") if u["tag"] else "",
                                              u["chat_name"][:16], (u["sender_name"] or "?")[:12],
                                              txt, mark))
-    fn = os.path.join(HERE, "output", "days", "%s_units.md" % date)
+    fn = os.path.join(PROFILE, "output", "days", "%s_units.md" % date)
     io.open(fn, "w", encoding="utf-8", newline="\n").write("\n".join(out) + "\n")
     print("%s: raw=%d rows=%d fold=%d units=%d (cut %.1f%%) ｜ 超长省略 %d 条（共省 %d 字）"
           " -> output/days/%s_units.md"

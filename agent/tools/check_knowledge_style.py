@@ -16,6 +16,8 @@
 import argparse
 import io
 import os
+from profile_paths import profile_root
+PROFILE = profile_root()
 import re
 import sys
 
@@ -44,24 +46,24 @@ def main():
     a = ap.parse_args()
 
     files = []
-    kd = os.path.join(HERE, "docs", "knowledge")
+    kd = os.path.join(PROFILE, "knowledge")
     if os.path.isdir(kd):
         files += [os.path.join(kd, f) for f in sorted(os.listdir(kd)) if f.endswith(".md")]
     for extra in ("resources.md",):
-        p = os.path.join(HERE, "docs", extra)
+        p = os.path.join(PROFILE, "docs", extra)
         if os.path.exists(p):
             files.append(p)
     if a.all:
         # 2026-09-15：排除证据层日志 docs\debug_*.md —— 它的节标题本来就是"按日期/事件连续追加"的形态，
         # 而且会出现「知识库『补录块』清理（2026-09-15）」这种**描述这件事**的标题，被 BAD 正则误判成违规。
-        files += [os.path.join(HERE, "docs", f) for f in sorted(os.listdir(os.path.join(HERE, "docs")))
+        files += [os.path.join(PROFILE, "docs", f) for f in sorted(os.listdir(os.path.join(PROFILE, "docs")))
                   if f.endswith(".md") and not f.startswith("debug_")]
 
     bad_total = 0
     for p in files:
         hits = scan(p)
         if hits:
-            print("FAIL  %s" % os.path.relpath(p, HERE))
+            print("FAIL  %s" % os.path.relpath(p, PROFILE))
             for ln, text in hits:
                 print("   :%-4d %s" % (ln, text))
             bad_total += len(hits)

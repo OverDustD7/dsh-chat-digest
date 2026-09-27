@@ -58,6 +58,8 @@ import argparse
 import html
 import json
 import os
+from profile_paths import profile_root
+PROFILE = profile_root()
 import re
 import shutil
 import sys
@@ -66,7 +68,7 @@ import zipfile
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # agent 根（＝包内 agent/ 或 <个人目录>）
-DAYS = os.path.join(HERE, "output", "days")
+DAYS = os.path.join(PROFILE, "output", "days")
 
 #: 直接按文本读的扩展名（其余文本类走专门解析）
 PLAIN_EXT = {"txt", "md", "csv", "json", "xml", "html", "htm"}

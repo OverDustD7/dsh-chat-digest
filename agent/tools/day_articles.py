@@ -15,6 +15,8 @@ import datetime as dt
 import io
 import json
 import os
+from profile_paths import profile_root
+PROFILE = profile_root()
 import re
 import subprocess
 import sys
@@ -23,7 +25,7 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HERE_PIPE = os.path.join(os.path.dirname(HERE), "pipeline")   # A35：取数脚本在 <插件目录>/pipeline（原来指 <agent 根>/scripts，A34 后那里不存在）
 TZ = dt.timezone(dt.timedelta(hours=8))
-ART = os.path.join(HERE, "output", "window", "articles")
+ART = os.path.join(PROFILE, "output", "window", "articles")
 TITLE_RE = re.compile(r"<title>(.*?)</title>", re.S)
 URL_RE = re.compile(r"<url>(.*?)</url>", re.S)
 ANY_URL = re.compile(r"https?://mp\.weixin\.qq\.com/[^\s\"'<>\\)）】]+")
@@ -74,7 +76,7 @@ def main():
         __import__("datetime").datetime.strptime(DATE, "%Y-%m-%d")
     except Exception:
         raise SystemExit("day_articles.py: 日期参数必须是 YYYY-MM-DD，收到 %r" % (DATE,))
-    src = os.path.join(HERE, "output", "days", "%s.jsonl" % DATE)
+    src = os.path.join(PROFILE, "output", "days", "%s.jsonl" % DATE)
     if not os.path.exists(src):
         print("缺 %s" % src)
         return 1
@@ -139,7 +141,7 @@ def main():
             c["local"] = (os.path.basename(out), n) if n > 400 else None
             fetched.append((c["title"] or c["url"][:60], "%d 字符%s" % (n, "（疑似 captcha/空正文）" if n <= 400 else "")))
 
-    out = os.path.join(HERE, "output", "days", "%s_articles.md" % DATE)
+    out = os.path.join(PROFILE, "output", "days", "%s_articles.md" % DATE)
     with io.open(out, "w", encoding="utf-8", newline="\n") as f:
         f.write("# %s 当天文章/卡片清单（提炼前**必查**：有正文的必须读，别只读群消息）\n\n" % DATE)
         f.write("> 本地正文目录：`output\\window\\articles\\`（历史上抓过的都在这里；**先查它再考虑联网**）\n")

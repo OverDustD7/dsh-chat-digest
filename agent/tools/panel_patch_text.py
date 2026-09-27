@@ -17,6 +17,8 @@ import datetime as dt
 import io
 import json
 import os
+from profile_paths import profile_root
+PROFILE = profile_root()
 import sys
 
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
@@ -91,7 +93,7 @@ def main(argv=None):
         print('--dry-run：未写留档、未回写')
         return 0
 
-    arch = os.path.join(HERE, 'docs', 'archive', '%s_edits.md' % now.strftime('%Y-%m-%d'))
+    arch = os.path.join(PROFILE, 'archive', '%s_edits.md' % now.strftime('%Y-%m-%d'))
     head = ''
     if not os.path.exists(arch):
         head = ('# %s 面板条目正文修改留档\n\n'

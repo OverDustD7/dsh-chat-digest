@@ -17,12 +17,14 @@ import datetime as dt
 import glob
 import io
 import os
+from profile_paths import profile_root
+PROFILE = profile_root()
 import re
 import sys
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DAYS = os.path.join(HERE, "output", "days")
+DAYS = os.path.join(PROFILE, "output", "days")
 # 群名 = 行首那串方括号里的**最后一个**（`[问]/[答]/[卡片]` 这些标记在前，群名在后）
 LEAD = re.compile(r"^(?:\d\d:\d\d\s+)?((?:\[[^\]]*\]\s*)*)")
 

@@ -6,12 +6,14 @@
 """
 import io
 import os
+from profile_paths import profile_root
+PROFILE = profile_root()
 import sqlite3
 import sys
 import datetime
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DB = os.path.join(ROOT, "output", "qq", "nt_msg_export.db")
+DB = os.path.join(PROFILE, "output", "qq", "nt_msg_export.db")
 CST = datetime.timezone(datetime.timedelta(hours=8))
 
 try:

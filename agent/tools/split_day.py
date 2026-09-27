@@ -17,6 +17,8 @@ import datetime as dt
 import io
 import json
 import os
+from profile_paths import profile_root
+PROFILE = profile_root()
 import re
 import sys
 from collections import defaultdict
@@ -85,7 +87,7 @@ def load(date, min_len=4):
     于是"图是开玩笑发的"这个信号少了一半（正是 A46「静默截断＝漏报」那一类）。
     ⇒ 语境线显式传 `min_len=2`；**读语料的视图仍用默认 4**（别顺手改默认值 —— 那会动到覆盖率自检）。
     """
-    p = os.path.join(HERE, "output", "days", "%s.jsonl" % date)
+    p = os.path.join(PROFILE, "output", "days", "%s.jsonl" % date)
     if not os.path.exists(p):
         return None
     rows = []
@@ -135,7 +137,7 @@ def load_units_corpus(date):
     ⇒ 需要逐条读完的语料＝**过滤后留下的单元（被筛过的那个群）+ 其余会话的全部单元**（其余群没筛，一条不少）。
     判据用"群名"而不是写死某个群：`_units_filtered.md` 里出现过哪些群名，就认为那些群已被筛过。
     """
-    d = os.path.join(HERE, "output", "days")
+    d = os.path.join(PROFILE, "output", "days")
     fp = os.path.join(d, "%s_units_filtered.md" % date)
     up = os.path.join(d, "%s_units.md" % date)
     kept, covered = [], set()
@@ -175,7 +177,7 @@ def main():
             return 1
         lines.sort(key=lambda s: s[:5])          # 行首 HH:MM → 时间序
         slices = [lines[i:i + target] for i in range(0, len(lines), target)]
-        outdir = os.path.join(HERE, "output", "days")
+        outdir = os.path.join(PROFILE, "output", "days")
         idx = ["# %s 分片索引 · 话语单元语料（%d 行 → %d 片，每片 ~%d 行）" % (date, len(lines), len(slices), target), "",
                "> 语料＝小模型过筛后保留的大群单元（%d 条）+ 其余会话全部单元（%d 条）。" % (len(kept), len(rest)),
                "> **每片派一个子代理逐条读完**；被小模型丢掉的原文在 `%s_units_dropped.md`（可回查、抽检）。" % date,
@@ -239,7 +241,7 @@ def main():
         if not placed:
             slices.append({"chats": [chat], "rows": list(rs), "n": len(rs)})
 
-    outdir = os.path.join(HERE, "output", "days")
+    outdir = os.path.join(PROFILE, "output", "days")
     idx = ["# %s 分片索引（%d 行 → %d 片，每片 ~%d 行）" % (date, len(rows), len(slices), target), "",
            "> **每片派一个子代理逐条读完**（不是关键字筛）——片小到能进一个上下文，但覆盖是完整的。",
            "> 子代理回报：留了什么 + 这个群/这段有没有共性问题。", ""]

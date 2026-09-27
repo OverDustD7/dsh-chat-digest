@@ -15,6 +15,8 @@ import datetime as dt
 import io
 import json
 import os
+from profile_paths import profile_root
+PROFILE = profile_root()
 import sys
 
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
@@ -60,7 +62,7 @@ def main(argv=None):
 
     now = dt.datetime.now(TZ).strftime('%Y-%m-%d %H:%M')
     today = dt.datetime.now(TZ).strftime('%Y-%m-%d')
-    arch = args.archive or os.path.join(HERE, 'docs', 'archive', '%s_expired.md' % today)
+    arch = args.archive or os.path.join(PROFILE, 'archive', '%s_expired.md' % today)
 
     items = get_items()
     want = set(args.ids)

@@ -20,6 +20,8 @@ import datetime as dt
 import io
 import json
 import os
+from profile_paths import profile_root
+PROFILE = profile_root()
 import re
 import sys
 import time
@@ -28,7 +30,7 @@ import urllib.request
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-OUT = os.path.join(HERE, "output", "window")
+OUT = os.path.join(PROFILE, "output", "window")
 DSH = os.path.join(os.path.expanduser("~"), ".dsh")
 CRED = os.path.join(DSH, ".credentials.yaml")
 SETTINGS = os.path.join(DSH, "settings.yaml")

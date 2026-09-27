@@ -13,11 +13,9 @@
 // 产出:  默认 output\window\pages\<host>_<slug>.md
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
-import { cfg } from "./pconf.mjs";
+import { cfg, configDir } from "./pconf.mjs";
 
-const PIPE = path.dirname(fileURLToPath(import.meta.url));                       // <插件目录>/pipeline
-const HERE = path.join(path.dirname(PIPE), "agent");                              // 工作区＝<插件目录>/agent（A35）
+const HERE = configDir;
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
 const argv = process.argv.slice(2);

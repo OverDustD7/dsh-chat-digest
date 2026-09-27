@@ -12,6 +12,8 @@ import datetime as dt
 import io
 import json
 import os
+from profile_paths import profile_root
+PROFILE = profile_root()
 import re
 import sys
 import collections
@@ -31,7 +33,7 @@ def main(argv):
     date = argv[0]
     from_ts = int(argv[1])
     to_ts = int(argv[2]) if len(argv) > 2 else 1 << 40
-    src = os.path.join(HERE, "output", "days", "%s.jsonl" % date)
+    src = os.path.join(PROFILE, "output", "days", "%s.jsonl" % date)
     rows, dropped = [], 0
     for line in io.open(src, encoding="utf-8", errors="replace"):
         line = line.strip()
@@ -70,7 +72,7 @@ def main(argv):
 
     # 图片清单（本地已落盘的）
     imgs = []
-    ip = os.path.join(HERE, "output", "days", "%s_images.json" % date)
+    ip = os.path.join(PROFILE, "output", "days", "%s_images.json" % date)
     if os.path.exists(ip):
         try:
             for it in json.load(io.open(ip, encoding="utf-8")):
@@ -82,7 +84,7 @@ def main(argv):
 
     per_chat = collections.Counter(r["chat"] for r in rows)
     stamp = dt.datetime.fromtimestamp(from_ts, TZ).strftime("%H%M")
-    out = os.path.join(HERE, "output", "days", "%s_tail_%s.md" % (date, stamp))
+    out = os.path.join(PROFILE, "output", "days", "%s_tail_%s.md" % (date, stamp))
     with io.open(out, "w", encoding="utf-8", newline="\n") as f:
         f.write("# %s 增量视图（%s 之后）\n\n" % (date, dt.datetime.fromtimestamp(from_ts, TZ).strftime("%m-%d %H:%M")))
         f.write("> 覆盖 %s ~ %s ｜ 消息行 %d ｜ 图片 %d（丢弃空/表情 %d）\n" % (
@@ -111,14 +113,14 @@ def main(argv):
             d = dt.datetime.fromtimestamp(int(it.get("ts") or 0), TZ).strftime("%H:%M")
             p = (it.get("path") or [""])[0]
             f.write("- %s [%s] %s ｜ %s\n" % (d, it.get("chat_name", "?")[:18], it.get("sender", "")[:10],
-                                              os.path.join(HERE, "output", "window", "images", p) if p else ""))
+                                              os.path.join(PROFILE, "output", "window", "images", p) if p else ""))
     print("wrote %s ｜ rows=%d imgs=%d ｜ %s" % (out, len(rows), len(imgs), dict(per_chat.most_common(8))))
 
     # 降噪版：把窗口内条数 >= NOISY_N 的"水群"整段挪出去（只挪，不丢——名单与条数写在文件头）
     NOISY_N = 200
     noisy = {c for c, n in per_chat.items() if n >= NOISY_N}
     if noisy:
-        out2 = os.path.join(HERE, "output", "days", "%s_tail_%s_signal.md" % (date, stamp))
+        out2 = os.path.join(PROFILE, "output", "days", "%s_tail_%s_signal.md" % (date, stamp))
         kept = [r for r in rows if r["chat"] not in noisy]
         with io.open(out2, "w", encoding="utf-8", newline="\n") as f:
             f.write("# %s 增量视图·降噪版（%s 之后；已移出大水群）\n\n" % (
@@ -145,7 +147,7 @@ def main(argv):
                 d = dt.datetime.fromtimestamp(int(it.get("ts") or 0), TZ).strftime("%H:%M")
                 p = (it.get("path") or [""])[0]
                 f.write("- %s [%s] %s ｜ %s\n" % (d, it.get("chat_name", "?")[:18], it.get("sender", "")[:10],
-                                                  os.path.join(HERE, "output", "window", "images", p) if p else ""))
+                                                  os.path.join(PROFILE, "output", "window", "images", p) if p else ""))
         print("wrote %s ｜ rows=%d（移出水群 %s）" % (out2, len(kept), sorted(noisy)))
     return 0
 

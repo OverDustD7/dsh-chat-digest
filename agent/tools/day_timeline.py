@@ -13,6 +13,8 @@ import datetime as dt
 import io
 import json
 import os
+from profile_paths import profile_root
+PROFILE = profile_root()
 import re
 import sys
 from collections import Counter, defaultdict
@@ -87,7 +89,7 @@ def main(dates):
     # 群名解析：`session_meta.json` 能给"没名字的 chatroom"补显示名；补不上就用成员兜底
     #   （起因：`<群ID>@chatroom` 在产物里 name 就是它自己的 id → 113 条 / 23.5K 字成了一块无名数据）
     meta = {}
-    mp = os.path.join(HERE, "output", "window", "session_meta.json")
+    mp = os.path.join(PROFILE, "output", "window", "session_meta.json")
     if os.path.exists(mp):
         try:
             meta = json.load(io.open(mp, encoding="utf-8")) or {}
@@ -98,7 +100,7 @@ def main(dates):
         return n == "?" or bool(re.match(r"^[\w\-]+@chatroom$", n or ""))
 
     for DATE in dates:
-        src = os.path.join(HERE, "output", "days", "%s.jsonl" % DATE)
+        src = os.path.join(PROFILE, "output", "days", "%s.jsonl" % DATE)
         if not os.path.exists(src):
             print("缺 %s" % src)
             continue
@@ -186,7 +188,7 @@ def main(dates):
                 if d in crossdom:
                     links.append((d, r))
 
-        out = os.path.join(HERE, "output", "days", "%s_timeline.md" % DATE)
+        out = os.path.join(PROFILE, "output", "days", "%s_timeline.md" % DATE)
         with io.open(out, "w", encoding="utf-8", newline="\n") as f:
             f.write("# %s 跨会话时间轴（全会话按时间合并、去噪、同句合并）\n\n" % DATE)
             f.write("> 行式 `★HH:MM [群] 人: 内容`；**★＝该行属于「同一段文字被多个群转发」**（多半是同一条待办 → 优先看）\n")

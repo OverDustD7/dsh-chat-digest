@@ -16,6 +16,8 @@ import argparse
 import io
 import json
 import os
+from profile_paths import profile_root
+PROFILE = profile_root()
 import sys
 
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
@@ -34,7 +36,7 @@ def main(argv=None):
     a = ap.parse_args(argv)
     ids = list(a.ids)
     if a.ids_file:
-        p = a.ids_file if os.path.isabs(a.ids_file) else os.path.join(HERE, a.ids_file)
+        p = a.ids_file if os.path.isabs(a.ids_file) else os.path.join(PROFILE, a.ids_file)
         raw = [ln.strip() for ln in io.open(p, encoding='utf-8') if ln.strip() and not ln.startswith('#')]
         # A09：校验 id 文件格式 —— 一行一个 id；出现空白分隔（误把整份 items.json 传进来）
         # 或明显不像 id 的行，先报出来再继续，别静默拼出几百个假 id。
@@ -68,10 +70,10 @@ def main(argv=None):
         else:
             print('拒绝写入：这些 id 不在面板上：%s' % ', '.join(missing))
         print('  未命中：%s' % ', '.join(missing))
-        print('  已有交付物保持原样：%s' % os.path.join(HERE, 'output', 'daily', a.date, 'items.json'))
+        print('  已有交付物保持原样：%s' % os.path.join(PROFILE, 'output', 'daily', a.date, 'items.json'))
         return 4
 
-    p = os.path.join(HERE, 'output', 'daily', a.date, 'items.json')
+    p = os.path.join(PROFILE, 'output', 'daily', a.date, 'items.json')
     os.makedirs(os.path.dirname(p), exist_ok=True)
     if os.path.exists(p):
         with io.open(p, encoding='utf-8') as fh:

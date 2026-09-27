@@ -15,6 +15,8 @@ import base64
 import io
 import json
 import os
+from profile_paths import profile_root
+PROFILE = profile_root()
 import re
 import sys
 import time
@@ -22,7 +24,7 @@ import urllib.request
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-OUT = os.path.join(HERE, "output")
+OUT = os.path.join(PROFILE, "output")
 URL = "http://127.0.0.1:11434/api/chat"
 MODEL = "qwen3.5:9b"
 
@@ -63,12 +65,12 @@ def find_images(date, n):
         if not isinstance(it, dict):
             continue
         for rel in (it.get("path") or []):
-            cand = os.path.join(HERE, "output", "window", "images", rel.replace("/", os.sep))
+            cand = os.path.join(PROFILE, "output", "window", "images", rel.replace("/", os.sep))
             if os.path.exists(cand):
                 acc.append(cand)
     seen, out = set(), []
     for a in acc:
-        for cand in (a, os.path.join(HERE, a), os.path.join(HERE, "output", a)):
+        for cand in (a, os.path.join(HERE, a), os.path.join(PROFILE, "output", a)):
             if os.path.exists(cand) and cand not in seen:
                 seen.add(cand)
                 out.append(cand)

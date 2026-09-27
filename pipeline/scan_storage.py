@@ -28,7 +28,7 @@ from collections import Counter, defaultdict
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 WX = WX_ACCOUNT_DIR
 QQ = os.path.join(QQ_DATA_DIR, SELF_QQ)
-OUT = r"OUT_DIR\window\storage_scan.md"
+OUT = os.path.join(OUT_DIR, "window", "storage_scan.md")
 
 MB = 1024.0 * 1024
 
@@ -91,6 +91,7 @@ for r in res:
             alljunk.append((sz, p))
     lines.append("")
 
+os.makedirs(os.path.dirname(OUT), exist_ok=True)
 with open(OUT, "w", encoding="utf-8") as f:
     f.write("\n".join(lines))
 

@@ -10,11 +10,13 @@ import io
 import json
 import os
 import sys
+from profile_paths import profile_root
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PROFILE = profile_root()
 TZ = dt.timezone(dt.timedelta(hours=8))
-DATE = sys.argv[1] if len(sys.argv) > 1 else "2026-09-13"
+DATE = sys.argv[1] if len(sys.argv) > 1 else dt.datetime.now(TZ).strftime("%Y-%m-%d")
 
 spec = importlib.util.spec_from_file_location("cf_api", os.path.join(HERE, "docs", "agent", "cf_api.py"))
 cf_api = importlib.util.module_from_spec(spec)
@@ -98,5 +100,5 @@ checks = [
     ("docs/信息列表.md", True),
 ]
 for rel, show_lines in checks:
-    p = os.path.join(HERE, rel)
+    p = os.path.join(PROFILE, rel)
     print("  %-42s %s %s" % (rel, mt(p), ("%d 行" % lines(p)) if show_lines and os.path.exists(p) else ""))
