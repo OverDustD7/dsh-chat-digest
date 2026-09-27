@@ -33,17 +33,23 @@ import re
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
-CRED = os.path.expanduser("~/.dsh/.credentials.yaml")   # 不写死用户名
-AUTHORITY = "127.0.0.1:3080"
-BASE = "http://" + AUTHORITY
+DSH_HOME = os.environ.get("DSH_HOME") or os.path.expanduser("~/.dsh")
+CRED = os.path.join(DSH_HOME, ".credentials.yaml")
+BASE = os.environ.get("DSH_CHAT_FEED_BASE_URL", "http://127.0.0.1:3080").rstrip("/")
+_base_url = urllib.parse.urlsplit(BASE)
+if _base_url.scheme != "http" or _base_url.hostname not in ("127.0.0.1", "localhost", "::1"):
+    raise RuntimeError("DSH_CHAT_FEED_BASE_URL 必须是本机 HTTP 回环地址")
+AUTHORITY = _base_url.netloc
 COOKIE_PREFIX = "dsh-auth-"
 RECORD_KEY = "client-connection/browser-session"
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 WORKSPACE = os.path.dirname(os.path.dirname(HERE))  # docs\agent -> docs -> 工作区根
-DEFAULT_OUT = os.path.join(WORKSPACE, "output", "logs", "_last_http.json")
+PROFILE = os.path.realpath(os.environ.get("DSH_CHAT_FEED_LOCAL") or os.path.join(DSH_HOME, "dsh-chat-digest"))
+DEFAULT_OUT = os.path.join(PROFILE, "output", "logs", "_last_http.json")
 
 
 def b64u(raw: bytes) -> str:
