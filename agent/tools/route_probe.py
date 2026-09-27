@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
-r"""跑前先探"某高校免费网关（THU）还通不通" —— 通就用 THU，不通才回 paratera（用户 2026-09-17 定的规矩）。
+r"""跑前先探"某高校免费网关（线路1）还通不通" —— 通就用 线路1，不通才回 paratera（用户 2026-09-17 定的规矩）。
 
-为什么要它：用户 2026-09-17 明确「每次跑之前先检测 THU 连通性，如果可以用 THU 就用 THU，不可以才用 paratera」。
-背景事实（实测）：THU（provider `deepseek`，`<部署方的免费网关>`）**免费但很不稳定** ——
+为什么要它：用户 2026-09-17 明确「每次跑之前先检测 线路1 连通性，如果可以用 线路1 就用 线路1，不可以才用 paratera」。
+背景事实（实测）：线路1（provider `deepseek`，`<部署方的免费网关>`）**免费但很不稳定** ——
 09-17 才通、前一天不通；paratera 稳定但走 DeepSeek 官方高峰价（干净一轮 ≈ ¥2–3）。
-**还有一个硬差异必须知道**：THU 的 `contextWindow` 只有 **200,000**，paratera 是 **1,000,000**（差 5 倍）——
-所以"能用 THU"只解决钱的问题，**长上下文会缩水**（`ctxRatio=0.5` 时 200k 会在 100k 就触发自动刷新）。
+**还有一个硬差异必须知道**：线路1 的 `contextWindow` 只有 **200,000**，paratera 是 **1,000,000**（差 5 倍）——
+所以"能用 线路1"只解决钱的问题，**长上下文会缩水**（`ctxRatio=0.5` 时 200k 会在 100k 就触发自动刷新）。
 
-退出码（沿用"上游缺失单独报"的纪律）：**0 = THU 可用** ｜ **3 = THU 不可用（该走 paratera）** ｜ 1 = 探测本身出错。
+退出码（沿用"上游缺失单独报"的纪律）：**0 = 线路1 可用** ｜ **3 = 线路1 不可用（该走 paratera）** ｜ 1 = 探测本身出错。
 
 用法：
     ..\venv\Scripts\python.exe tools\route_probe.py                 # 探两条线 + 给结论（人读）
@@ -38,8 +38,8 @@ TZ = dt.timezone(dt.timedelta(hours=8))
 #   包内不许写死任何人的网关地址与模型名）。插件自己的 `routes` 配置才是权威来源，
 #   见 profile 的 `cordis.patch.yml`；这里的默认值只用来在命令行上临时试。
 ROUTES = {
-    "thu": {"provider": "deepseek", "model": os.environ.get("THU_MODEL", ""), "keyEnv": os.environ.get("THU_KEY_ENV", "THU_API_KEY"),
-            "base": os.environ.get("THU_BASE", ""), "ctx": 200000, "price": "免费",
+    "thu": {"provider": "deepseek", "model": os.environ.get("线路1_MODEL", ""), "keyEnv": os.environ.get("线路1_KEY_ENV", "线路1_API_KEY"),
+            "base": os.environ.get("线路1_BASE", ""), "ctx": 200000, "price": "免费",
             "note": "免费线；**能不能读图、窗口多大由部署方自己确认**"},
     "paratera": {"provider": "paratera", "model": os.environ.get("PARATERA_MODEL", ""), "keyEnv": "PARATERA_API_KEY",
                  "base": os.environ.get("PARATERA_BASE", ""), "ctx": 1000000, "price": "付费线",
@@ -161,7 +161,7 @@ def main():
                                                           "（**回退 paratera 必须在 --yes 下才动**：付费要用户点头）")
     ap.add_argument("--yes", action="store_true", help="用户已同意付费回退 paratera（只在 --ensure 时有意义）")
     ap.add_argument("--set-default", choices=sorted(ROUTES))
-    ap.add_argument("--thu-only", action="store_true", help="只探 THU（快，给「跑前判活」用）")
+    ap.add_argument("--thu-only", action="store_true", help="只探 线路1（快，给「跑前判活」用）")
     a = ap.parse_args()
     now = dt.datetime.now(TZ).strftime("%Y-%m-%d %H:%M:%S")
 
@@ -176,9 +176,9 @@ def main():
     thu = res["thu"]
     usable = bool(thu.get("ok"))
     # **第二道判据：上下文放不放得下**（2026-09-17 实测教训）——
-    #   现在架构是"**两个会话**"（`sessThu` 新建、`sessParatera` 是原来那个长会话）⇒ THU 那个槽的上下文是新的、必然放得下；
-    #   这里算的 `fits` 用的是**当前活跃会话**的用量，只作参考：它大说明"你别把**这个**会话切去 THU"，
-    #   而正确做法是**切到 THU 那个独立会话**（`POST /chat-feed/api/route-pick {"route":"thu"}`），不是把长会话改指过去。
+    #   现在架构是"**两个会话**"（`sessThu` 新建、`sessParatera` 是原来那个长会话）⇒ 线路1 那个槽的上下文是新的、必然放得下；
+    #   这里算的 `fits` 用的是**当前活跃会话**的用量，只作参考：它大说明"你别把**这个**会话切去 线路1"，
+    #   而正确做法是**切到 线路1 那个独立会话**（`POST /chat-feed/api/route-pick {"route":"thu"}`），不是把长会话改指过去。
     cx = ctx_now()
     HEADROOM = 50000
     fits = None
@@ -189,12 +189,12 @@ def main():
              % (pick or '(未知)', (cx.get("sessThu") or '(无)')[:20], (cx.get("sessParatera") or '(无)')[:20])) \
             if "err" not in cx else ("读不到 /state：%s" % cx.get("err"))
     if usable:
-        verdict = ("THU 可用 ⇒ **走 THU 那个会话**（`route-pick thu`，免费；它窗口 200k 但**是新会话**，放得下；"
-                   "刷新阈值 0.9）。当前活跃会话用量 %s tokens%s —— **不要把这个长会话改指去 THU**，要用独立会话。%s"
+        verdict = ("线路1 可用 ⇒ **走 线路1 那个会话**（`route-pick thu`，免费；它窗口 200k 但**是新会话**，放得下；"
+                   "刷新阈值 0.9）。当前活跃会话用量 %s tokens%s —— **不要把这个长会话改指去 线路1**，要用独立会话。%s"
                    % (cx.get("tokens") if "err" not in cx else '?',
                       "" if fits is not False else "（已超过 200k，改指会溢出）", slots))
     else:
-        verdict = ("THU 不可用 ⇒ **先问用户**是否就用 paratera（%s），他同意才 `POST /chat-feed/api/route-pick {\"route\":\"paratera\"}`。%s"
+        verdict = ("线路1 不可用 ⇒ **先问用户**是否就用 paratera（%s），他同意才 `POST /chat-feed/api/route-pick {\"route\":\"paratera\"}`。%s"
                    % (ROUTES["paratera"]["price"], slots))
     pack = {"checkedAt": now, "thuUsable": usable, "ctx": cx, "thuFits": fits, "routePick": pick, "slots": slots,
             # 注意别在这里再写一个 "preferred"（2026-09-17 踩过：重复键把上面这行覆盖掉，于是"超窗口"也报 thu）
@@ -209,8 +209,8 @@ def main():
     if a.ensure:
         want = ROUTES[pack["preferred"]]
         if pack["preferred"] == "paratera" and not a.yes:
-            # 付费线路**不许自动切**（用户 2026-09-17：THU 不通要先问他）
-            pack["ensure"] = "**未自动切换**：THU 不通，回退 paratera 是付费线路，必须先 ask_user_question 问用户；他同意后再跑 --ensure --yes"
+            # 付费线路**不许自动切**（用户 2026-09-17：线路1 不通要先问他）
+            pack["ensure"] = "**未自动切换**：线路1 不通，回退 paratera 是付费线路，必须先 ask_user_question 问用户；他同意后再跑 --ensure --yes"
         else:
             cur = ""
             try:

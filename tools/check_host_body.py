@@ -47,11 +47,11 @@ for frag in ("const DIR =", "const WAKE_TEXT =", "apply(ctx)",
              # 2026-09-17：提炼改成"本机先初提、主 agent 成稿"（旧口径"提炼派子代理"已废）
              #   —— 这三条是主 agent 新流程的入口/自检/回原文核，丢一条它就会退回 ¥27 的旧打法
  
-             # 2026-09-17：跑前探路由（THU 通就用 THU、不通要问过他才能回退付费的 paratera）
+             # 2026-09-17：跑前探路由（线路1 通就用 线路1、不通要问过他才能回退付费的 paratera）
               "先问",
              # 2026-09-17：**会话内换模型**（DSH selectModel）—— 不再让用户去刷新会话
              "routeOk.route = route", "selectModel", "POST /chat-feed/api/route", 
-             # 2026-09-17 晚：用户定案改成**两个常驻会话按需切换**（THU 一个 / paratera 一个）+ THU 刷新阈值 0.9
+             # 2026-09-17 晚：用户定案改成**两个常驻会话按需切换**（线路1 一个 / paratera 一个）+ 线路1 刷新阈值 0.9
              "routeOk.routePick = route", "routeOk.routeProbe = route", "pickRoute", "pluginProbe",
              "ensureBothSlots", "slotsInitAt", "routeOk.routeAdopt = route", "routeOfActive", "wsSessionIds", "activeRoute",
              "SLOTS_VER", "adoptRouteByTitle", "slotsInitVer", "routeProbe: S.routeProbe", "sessThu: S.sessThu ||",
@@ -200,8 +200,8 @@ for frag in ("const DIR =", "const WAKE_TEXT =", "apply(ctx)",
              "CF.dshHome", "CF.stateDir", "CF.wxRoot",
              # A25（2026-09-25）：面板活数据从 %TEMP% 迁到持久数据根（A18 的漏网之鱼）
              "const PANEL_OLD", "已从旧 %TEMP% 迁到",
-             # A27（2026-09-25）：`routeWhy` 必须报**实际探的那条线**。旧版把这句话写死成 "THU"，
-             #   于是探 paratera 成功时 /state 会同时给出 routePick=paratera 与 routeWhy="probe:THU 可达"
+             # A27（2026-09-25）：`routeWhy` 必须报**实际探的那条线**。旧版把这句话写死成 "线路1"，
+             #   于是探 paratera 成功时 /state 会同时给出 routePick=paratera 与 routeWhy="probe:线路1 可达"
              #   —— 自证字段当场自相矛盾（实测 2026-09-25）。配套探针 H23。
              "'probe:' + probeRes.route",
 

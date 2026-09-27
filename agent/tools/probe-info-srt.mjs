@@ -12,9 +12,9 @@ if (!fs.existsSync(stPath)) {
   process.exit(2);
 }
 const st = JSON.parse(fs.readFileSync(stPath, "utf8"));
-const cookies = (st.cookies || []).filter((c) => /tsinghua\.edu\.cn$/.test((c.domain || "").replace(/^\./, "")));
+const cookies = (st.cookies || []).filter((c) => /(new RegExp(process.env.SRT_HOST_RE || "\\.edu\\.cn$"))/.test((c.domain || "").replace(/^\./, "")));
 const names = cookies.map((c) => c.domain + ":" + c.name);
-console.log("[probe] cookies(域名:名，不含值):", names.join(", ") || "(无 tsinghua 域 cookie)");
+console.log("[probe] cookies(域名:名，不含值):", names.join(", ") || "(无 <站点> 域 cookie)");
 const header = cookies.map((c) => `${c.name}=${c.value}`).join("; ");
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 const res = await fetch(url, { headers: { "User-Agent": UA, Cookie: header, Accept: "text/html,*/*" }, redirect: "follow" });

@@ -11,7 +11,7 @@
 | [output_format.md](docs/output_format.md) | 输出与验收口径；当前是持续列表，不是每天独立主稿 |
 | [MAIN_AGENT_SPEC.md](docs/MAIN_AGENT_SPEC.md) | 主 agent 职责；数字与旧完成状态需核运行态 |
 | [agent/WORKING.md](docs/agent/WORKING.md) | 操作手册与 HTTP 契约 |
-| [WORKFLOW-AND-COST.md](docs/WORKFLOW-AND-COST.md) | 流程演进/历史成本；THU 0.9 等旧数值不作实时配置 |
+| [WORKFLOW-AND-COST.md](docs/WORKFLOW-AND-COST.md) | 流程演进/历史成本；线路1 0.9 等旧数值不作实时配置 |
 | knowledge/ | 人物、群、风格、偏好、经验、公众号、收藏 |
 | 信息列表.md | 面板镜像，不是独立主副本 |
 | KNOWN_ISSUES / EVOLUTION / DEV_NOTES | 历史问题、决策与排障依据；不以单个状态符号判完成 |

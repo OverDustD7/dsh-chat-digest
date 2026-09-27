@@ -54,7 +54,7 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   already resolved it; the pipeline and the tools only read the environment), and `pipeline/pconf.py`
   gained `profile()` / `p()` so every tool locates the personal profile directory the same way.
 - Deployment-specific values that were still hard-coded inside the toolbox moved out: the route gateway,
-  model names and key-variable name now come from the environment (`THU_*` / `PARATERA_*`), the
+  model names and key-variable name now come from the environment (`线路1_*` / `PARATERA_*`), the
   credentials path is resolved from the home directory, and several usage examples no longer name a
   particular deployment's groups or links.
 
