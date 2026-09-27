@@ -73,7 +73,9 @@ LAST_KEY_SOURCE = ""
 #: 为什么需要这一级：微信未登录时 kvcomm 里只剩 `key_0_<版本号>_…` 这种**占位**
 #: （code 段是 0，`4065598732` 其实是 idkey_clientversion），此时纯靠扫 kvcomm
 #: 会得出"解不出密钥"的假结论，而图片线其实完全能跑。
-HISTORICAL_CODES = (***REMOVED***,)
+# A55：历史 code 是**某个账号**的数据，不随包发布 —— 放 pipeline.yaml 的 `wx_hist_codes`
+HISTORICAL_CODES = tuple(int(x) for x in str(C.get("wx_hist_codes") or "")
+                          .replace("，", ",").split(",") if x.strip().isdigit())
 
 
 def find_kvcomm():

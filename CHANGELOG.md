@@ -5,6 +5,14 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [1.5.0] — 2026-09-27
 
+- **修掉通用化时丢掉的三个名字定义**：`SELF_QQ` 在 `daily_prep.py` / `qq_decrypt_hex.py` /
+  `scan_storage.py` 里从没定义过（一跑就 `NameError`），现在统一 `C.req("self_qq")`。
+- **管线验收探针修好并首次跑绿**：`test/pipeline-behavior-checks.py` 从 A34 起就按老布局找
+  `pipeline/scripts/`，一直跑不起来；现在路径按新布局解析、P05 在临时 mini 包里隔离运行
+  （夹具绝不写真实 profile）。六项 P01–P06 全过。
+- `wx_images.py` 的历史解密 code 挪到私有配置 `wx_hist_codes`（那是本机账号的数据，不随包发布）。
+- `test/*-results.json` 取消跟踪（.gitignore 早写了"不入库"，但规则对已跟踪文件无效）。
+
 **私人文件不再放包里；通用件全在包里**
 
 - **私人 profile（本地、不上传、更新不丢）**：提示词覆盖、私有配置、产物、知识库、归档、面板状态

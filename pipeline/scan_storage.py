@@ -12,6 +12,8 @@ WX_ACCOUNT_DIR = C.get("wx_account_dir")
 WX_MSG_GLOB = C.get("wx_msg_glob")
 WX_KEY_DIR = C.get("wx_key_dir")
 QQ_DATA_DIR = C.get("qq_data_dir")
+# A57：同上 —— SELF_QQ 从没定义过，这脚本一跑也 NameError
+SELF_QQ = C.req("self_qq", "QQ 号")
 WORK_DIR = work_dir()
 SELF_WXID = C.get("self_wxid")
 MAIN_GROUP = C.get("main_group")
