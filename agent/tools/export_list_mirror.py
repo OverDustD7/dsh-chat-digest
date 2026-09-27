@@ -21,7 +21,17 @@ sys.path.insert(0, os.path.join(HERE, 'docs', 'agent'))
 import cf_api  # noqa: E402
 
 TZ = dt.timezone(dt.timedelta(hours=8))
-OUT = os.path.join(HERE, 'docs', '信息列表.md')
+# A34：镜像是**个人数据**，写进个人目录（`<localDir>/docs/`），别写进包里 —— 重装会丢。
+try:
+    sys.path.insert(0, os.path.join(HERE, '..', 'pipeline'))   # 包内公共解析器
+    from pconf import p as _pp
+    OUT = _pp('docs', '信息列表.md')
+except Exception:
+    OUT = os.path.join(HERE, 'docs', '信息列表.md')
+try:
+    os.makedirs(os.path.dirname(OUT), exist_ok=True)
+except Exception:
+    pass
 TGROUPS = [('today', '🔴 今天 / 24 小时内'), ('week', '🟡 本周'), ('later', '⚪ 更远')]
 # 2026-09-13 用户要求：可报名/可申请的机会单独立一节「二、机会与招募」（原「二、有用信息」顺延为「三」）
 CGROUPS = [('today', '2.1 ⏳ 24 小时内截止'), ('week', '2.2 🟡 本周内截止'),
@@ -67,7 +77,7 @@ def main():
             orderI.append(('其他信息', x))
 
     now = dt.datetime.now(TZ).strftime('%Y-%m-%d %H:%M:%S')
-    out = ['# 聊天情报 · 信息列表（由面板自动导出，勿手改）', '',
+    out = ['# 聊天摘要 · 信息列表（由面板自动导出，勿手改）', '',
            '> 主副本是面板（`/chat-feed/api/items`）；本文件是**镜像**，勾选＝待办已完成 / 信息已知晓。',
            '> 导出：%s CST ｜ 共 %d 条（待办 %d / 机会 %d / 信息 %d；已勾选 %d）'
            % (now, len(items), len(todo), len(chance), len(info),
