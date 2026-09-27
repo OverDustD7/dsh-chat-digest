@@ -3,6 +3,41 @@
 All notable changes to this package. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] — 2026-09-27
+
+**私人文件不再放包里；通用件全在包里**
+
+- **私人 profile（本地、不上传、更新不丢）**：提示词覆盖、私有配置、产物、知识库、归档、面板状态
+  全部住在 `<DSH_HOME>/dsh-chat-digest`（缺省 `%USERPROFILE%\.dsh\dsh-chat-digest`）。
+  插件目录里的 `<包>/local`（别名 `profile`）与 `agent/output`、`agent/docs/{knowledge,archive}`
+  是**运行时联接**，挂载时自动重建 ⇒ 路径上"私人文件就在插件目录里"，而 `dsh plugin add` 重建包目录
+  时数据不会丢。`~/.dsh/.gitignore` 的 `*` 规则、仓库 `.gitignore`、包的 `files` 白名单三处都排掉它们。
+- **提示词本体进包**：`<包>/prompt/prompt.md`、`<包>/prompt/round.md`（通用件）。加载顺序
+  **私人 profile → 包内 `prompt/` → 内置通用**；要改就自己在私人 profile 放同名文件。
+  修掉一个真 bug：过去挂载会往私人目录播一份 1.2 KB 示例，把包里 19 KB 的完整提示词顶掉。
+- **随包代码一律包内解析**：`agent_root()`＝`<包>/agent`、`scripts_dir()`＝`<包>/pipeline`、
+  `work_dir()`/`out_dir()` 缺省＝私人 profile 及其 `output/`、`python_exe()` 缺省＝当前解释器、
+  包外第三方工具走 `external_dir`（缺省找 `<包>/vendor/`）。删掉 22 个管线脚本、3 个 `.mjs`、
+  10 个工具里指向包外的路径与 5 处字面占位符（`r"WORK_DIR"` 等）。
+- **round 提示词走 TPL**：`{agent}`/`{pkg}`/`{profile}`/`{py}`/`{work}` 与 `{date}`/`{mode}` 一起渲染
+  （过去 round 那条链只换 date/mode/inbox，17 个占位符会原样发给主 agent）。
+- **说明书的私人值摘成占位符**：真名/校名书院/师生姓名/群名与群 ID/校内短号/课程号/本机路径/
+  聊天昵称/图片 md5/消息 svrid 全部换成占位；本体（10 份全文说明书 + 65 个工具）照旧随包发布。
+- **包内不得出现私人值**：`package.json.files` 增加否定项（`local`、`profile`、`agent/output`、
+  `agent/docs/{knowledge,archive}`、`**/__pycache__`、`**/*.pyc`），门禁加固定检查。
+
+## [1.4.2] — 2026-09-27
+
+- 随包工具里剩下的本机路径通用化（`make_handoff` / `probe_boundary` / `read_session` / `kb_append`
+  的说明与示例）。
+- `pipeline/pipeline.example.yaml` 写清可选键：`work_dir` / `output_dir` / `python` / `external_dir`。
+- 新增 `tools/private-backup.ps1`：重装前备份、装完恢复私人 profile（只复制不删除）。
+
+## [1.4.1] — 2026-09-27
+
+- `agent/docs/agent/cf_api.py` 随包发布（1.4.0 漏了它）；`pipeline/requirements.txt` 补
+  `openpyxl` / `pypdf`（`read_attachment` 用）。
+
 ## [1.4.0] — 2026-09-27
 
 ### Added

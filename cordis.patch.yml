@@ -12,10 +12,13 @@
 # 下面这些键都**可选**，只在要覆盖缺省时才写；写在 profile 自己的 patch 层
 # （`~/.dsh/profiles/web/cordis.patch.yml`）里，按 id 覆盖这一行：
 #   bodyPath   权威 Host 函数体（默认 <包>/lib/host-body.txt；环境变量 DSH_CHAT_FEED_BODY 亦可）
-#   stateDir   插件数据目录（默认 %LOCALAPPDATA%\dsh-chat-digest）
-#   agentCwd   主 agent 的会话 cwd ＝ 它的工作区（默认 <stateDir>\workspace；通常要指到你的取数管线目录）
+#   stateDir   插件状态目录（默认 ＝ localDir，即私人 profile）
+#   agentCwd   主 agent 的会话 cwd ＝ 它的工作区（默认 ＝ localDir，即私人 profile；可写边界就是它）
 #   agentPreset 建会话时带的 agent preset（默认不带）
-#   localDir   你的私人内容目录（prompt.md / round.md）；默认 <包>/local；从 npm 装进来时建议指到固定目录
+#   localDir   你的**私人 profile**：提示词覆盖 + 私有配置 + 产物 + 知识库 + 状态；
+#              默认 <包>/local —— 它是**运行时联接**，真身在 <DSH_HOME>/dsh-chat-digest
+#              （这样"路径上在插件目录里"，而 `dsh plugin add` 重建包目录时数据不会丢）
+#   提示词本体在包内 `prompt/prompt.md` 与 `prompt/round.md`（通用件）；私人 profile 里放同名文件即覆盖
 #   wxRoot     微信附件根（**没有缺省值**，要 `file:` 链接就必须配）
 #   dshHome    DSH 家目录（默认 $DSH_HOME，没设就 %USERPROFILE%\.dsh）
 #   fileRoots  允许取字节 / 用默认应用打开的根目录数组（默认 [wxRoot, <agentCwd>\output]）
