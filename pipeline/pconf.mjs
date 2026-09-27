@@ -13,10 +13,15 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 function localDir() {
   const env = process.env.DSH_CHAT_FEED_LOCAL || '';
   if (env && fs.existsSync(env)) return env;
-  for (const c of [path.join(HERE, '..', 'local'), path.join(HERE, 'local')]) {
+  const appdata = process.env.LOCALAPPDATA
+    || (process.env.USERPROFILE ? path.join(process.env.USERPROFILE, 'AppData', 'Local') : '');
+  const cands = [];
+  if (appdata) cands.push(path.join(appdata, 'dsh-chat-digest'));   // A36：缺省＝插件自己的私人文件夹
+  cands.push(path.join(HERE, '..', 'local'), path.join(HERE, 'local'));
+  for (const c of cands) {
     if (fs.existsSync(c)) return c;
   }
-  return env || path.join(HERE, '..', 'local');
+  return env || cands[0];
 }
 
 const DIR = localDir();

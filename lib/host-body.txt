@@ -96,7 +96,8 @@ const WAKE_GENERIC = [
 //   ｜ `{py}` 用哪个 python ｜ `{date}` / `{mode}` 本轮。
 const TPL = (s, date, mode) => String(s || '')
   .replace(/\{pkg\}/g, String((typeof CF.pkgDir === 'string' && CF.pkgDir) || ''))
-  .replace(/\{agent\}/g, AGENT_CWD)
+  .replace(/\{agent\}/g, AGENT_ROOT)          // A36：{agent}＝包内只读骨架（说明书模板 + 工具箱）
+  .replace(/\{work\}/g, AGENT_CWD)              // A36：{work}＝会话工作区（＝私人文件夹，可写）
   .replace(/\{profile\}/g, String((typeof CF.localDir === 'string' && CF.localDir) || ''))
   .replace(/\{inbox\}/g, INBOX_DIR)
   .replace(/\{py\}/g, String((typeof CF.python === 'string' && CF.python) || 'python'))
