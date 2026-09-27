@@ -33,18 +33,18 @@ with contextlib.redirect_stdout(buf):
     record('P01_decrypt_all_missing_fails',True,isinstance(decrypt_rc,int) and decrypt_rc!=0)
     import time
     stale=OUT/'fixtures/stale.txt';stale.parent.mkdir(parents=True,exist_ok=True);stale.write_text('old output\n',encoding='utf-8');os.utime(stale,(1,1))
-    env=dict(time=time,os=os,HERE=str(OUT),SCRIPTS=str(OUT),subprocess=types.SimpleNamespace(run=lambda *a,**k:types.SimpleNamespace(returncode=0,stdout=''),TimeoutExpired=subprocess.TimeoutExpired))
+    env=dict(time=time,os=os,HERE=str(OUT),SCRIPTS=str(OUT),out_dir=lambda: str(OUT),subprocess=types.SimpleNamespace(run=lambda *a,**k:types.SimpleNamespace(returncode=0,stdout=''),TimeoutExpired=subprocess.TimeoutExpired))
     res=function(CI/'daily_prep.py','run',env)('synthetic-noop',['test'],[str(stale)])
     record('P02_stale_artifact_rejected',True,res['status']!='ok')
     # Current orchestrator with every external step mocked failed: its process-success result remains None.
     tmp=OUT/'fixtures/daily';tmp.mkdir(parents=True,exist_ok=True)
-    env=dict(sys=types.SimpleNamespace(argv=['daily_prep.py','2026-09-20']),dt=dt,TZ=dt.timezone(dt.timedelta(hours=8)),os=os,HERE=str(tmp),SCRIPTS=str(tmp),VENV_PY='python',NT_UTIL='export.py',WX_KEY='synthetic',QQ_KEY='synthetic',QQ_SRC='synthetic',run=lambda label,*a,**k:dict(step=label,status='FAILED',seconds=0,notes=[]),img_key_note=lambda _:[],check_url_coverage=lambda _:('CHECK-FAILED',[]),day_window=lambda _:(0,'?','?'),wx_login_line=lambda :'synthetic',MAIN_GROUP='synthetic',QQ_STALE_DAYS=3.0,qq_source_state=lambda:(0.1,'synthetic'),mark_qq_stale=lambda *a,**k:False)
+    env=dict(sys=types.SimpleNamespace(argv=['daily_prep.py','2026-09-20']),dt=dt,TZ=dt.timezone(dt.timedelta(hours=8)),os=os,HERE=str(tmp),SCRIPTS=str(tmp),TOOLS=str(tmp),VENV_PY='python',NT_UTIL='export.py',WX_KEY='synthetic',QQ_KEY='synthetic',QQ_SRC='synthetic',run=lambda label,*a,**k:dict(step=label,status='FAILED',seconds=0,notes=[]),img_key_note=lambda _:[],check_url_coverage=lambda _:('CHECK-FAILED',[]),day_window=lambda _:(0,'?','?'),wx_login_line=lambda :'synthetic',MAIN_GROUP='synthetic',QQ_STALE_DAYS=3.0,qq_source_state=lambda:(0.1,'synthetic'),mark_qq_stale=lambda *a,**k:False)
     rc=function(CI/'daily_prep.py','main',env)()
     record('P03_all_steps_fail_nonzero_exit',True,isinstance(rc,int) and rc!=0)
     # Export unknown ids against a synthetic existing deliverable.
     tmp=OUT/'fixtures/export';target=tmp/'output/daily/2026-09-20/items.json';target.parent.mkdir(parents=True,exist_ok=True);target.write_text('[{"id":"preserve"}]',encoding='utf-8')
     import argparse
-    env=dict(argparse=argparse,os=os,io=io,json=json,HERE=str(tmp),FIELDS=('id','text'),cf_api=types.SimpleNamespace(call=lambda *a:(200,'{"items":[]}')))
+    env=dict(argparse=argparse,os=os,io=io,json=json,HERE=str(tmp),PROFILE=str(tmp),FIELDS=('id','text'),cf_api=types.SimpleNamespace(call=lambda *a:(200,'{"items":[]}')))
     function(TOOLS/'export_day_items.py','main',env)(['2026-09-20','unknown-id'])
     record('P04_missing_ids_preserve_delivery',[{'id':'preserve'}],json.loads(target.read_text(encoding='utf-8')))
     # Fixture containing a QQ group message and private message plus an empty WX contact db.
@@ -65,9 +65,9 @@ with contextlib.redirect_stdout(buf):
     (mini/'pipeline'/'extract_window.py').write_text(
         'decode_wx_content=lambda a,b:a\nwx_text_summary=lambda a:a\nwx_type_label=lambda a:str(a)\nqq_content_summary=lambda a,b:a\n',
         encoding='utf-8')
-    wx=mini/'agent/output/wx';wx.mkdir(parents=True,exist_ok=True)
+    wx=prof/'output/wx';wx.mkdir(parents=True,exist_ok=True)
     db=sqlite3.connect(wx/'contact_plain.db');db.execute('CREATE TABLE IF NOT EXISTS contact(username,remark,nick_name)');db.close()
-    qq=mini/'agent/output/qq';qq.mkdir(parents=True,exist_ok=True)
+    qq=prof/'output/qq';qq.mkdir(parents=True,exist_ok=True)
     db=sqlite3.connect(qq/'nt_msg_export.db')
     for t in ['group_messages','c2c_messages']:
         db.execute('CREATE TABLE IF NOT EXISTS '+t+'(group_id,timestamp,sender_qq,msg_type,content_type,text,content)');db.execute('DELETE FROM '+t)
@@ -75,7 +75,7 @@ with contextlib.redirect_stdout(buf):
     db.commit();db.close()
     env2=dict(os.environ);env2['DSH_CHAT_FEED_LOCAL']=str(prof)
     run=subprocess.run([sys.executable,str(mini/'pipeline/extract_day.py'),'2026-09-20'],capture_output=True,env=env2)
-    out=(mini/'agent/output/days/2026-09-20.jsonl')
+    out=(prof/'output/days/2026-09-20.jsonl')
     lines=out.read_text(encoding='utf-8').splitlines() if out.is_file() else []
     record('P05_qq_group_and_private_extracted',2,len(lines))
     src=OUT/'fixtures/source.db';dst=OUT/'fixtures/clear.db'
@@ -99,5 +99,10 @@ with contextlib.redirect_stdout(buf):
            {'stale':True,'qq':'stale(9.6天未更新)','wx_untouched':'ok','fresh':False,'missing':'stale(缺源库)'},
            {'stale':hit,'qq':s_stale[1]['status'],'wx_untouched':s_stale[0]['status'],
             'fresh':miss,'missing':s_gone[1]['status']})
-(OUT/'pipeline-behavior-results.json').write_text(json.dumps(results,ensure_ascii=False,indent=2),encoding='utf-8')
-print(json.dumps(results,ensure_ascii=False,indent=2))
+failures = [r for r in results if not r['pass_']]
+print(json.dumps({'total': len(results), 'passed': len(results)-len(failures), 'failures': failures}, ensure_ascii=False))
+temp_root = pathlib.Path(tempfile.gettempdir()).resolve()
+if OUT.resolve().is_relative_to(temp_root) and OUT.resolve() != temp_root:
+    shutil.rmtree(OUT)
+if failures:
+    raise SystemExit(1)

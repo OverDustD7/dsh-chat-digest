@@ -6,6 +6,14 @@ const dir=path.dirname(fileURLToPath(import.meta.url));
 // 这个文件在 test/ 下（2026-09-25 从 docs/audit-2026-09-20/ 迁来）：它是**验收探针**，不是文档。
 const body=fs.readFileSync(path.resolve(dir,'../lib/host-body.txt'),'utf8');
 const results=[];
+{
+  const source=body.slice(body.indexOf('const TPL ='),body.indexOf('const DEMO_ITEMS'));
+  const tpl=new Function('CF','AGENT_ROOT','AGENT_CWD','INBOX_DIR',source+'return TPL;')(
+    {pkgDir:'P',localDir:'L',python:'python'},'A','W','I');
+  record('H27_round_cursor_uses_last_successful_delivery',
+    ['2026-09-26 12:00 CST','无（首次运行）','I'],
+    [tpl('{since}',null,null,Date.UTC(2026,8,26,4)),tpl('{since}',null,null,0),tpl('{inbox}')]);
+}
 // 路由层通用化（A29）后，切出来的片段会引用这些**外部常量**，而探针作用域里没有它们。
 // 按项目既有约定「定义在片段内」：给每个片段前置一段线路常量。
 // 故意**不**声明 DEFAULT_ROUTE / PROBE_URL —— 那两个本来就是按参数注入的，重名会撞。
@@ -26,7 +34,7 @@ function record(id, expected, actual){results.push({id,expected,actual,pass:JSON
 }
 {
  const handlers={},S={items:[{id:'a',text:'old',done:true}]};
- new Function('route','routeOk','S','saveState',chunk("routeOk.items = route('POST', 'items'",'routeOk.item = route'))((method,name,fn)=>(handlers[name]=fn),{},S,async()=> 'save-fail');
+ new Function('route','routeOk','S','saveState','collectRunFailed','cstHM',chunk("routeOk.items = route('POST', 'items'",'routeOk.item = route'))((method,name,fn)=>(handlers[name]=fn),{},S,async()=> 'save-fail',async()=> '',()=> '00:00');
  const response=await handlers['items-patch']({upsert:[{id:'a',text:'new'}]});
  record('H03_patch_persist_failure','save-fail',response.persist);
  record('H04_patch_preserve_done',true,S.items[0].done);
@@ -228,23 +236,26 @@ function loadStateWith(S, files, stateFile, stateOld, saveCalls) {
   const src=chunk('const cwdCanon = async (p) => {','//: DSH 家的位置')
     +'return {checkUsable,noteCwdStale,retireCwdStale};';
   const build=(metaOf,sumOf)=>new Function('fsSvc','ctx','S','AGENT_CWD','sessionMeta','sessionSummary','saveState',src)(
-    fsSvc,ctxStub,S,LOCAL,async(f,id)=>metaOf[id],async(sc,id)=>sumOf[id],async()=> 'saved');
+    fsSvc,ctxStub,S,PRIV,async(f,id)=>metaOf[id],async(sc,id)=>sumOf[id],async()=> 'saved');
   // ① 成员表里"活着"，但 cwd 还是旧的那棵树（包内 agent/）⇒ 判 stale
   const A=build({'session-A':{title:'M',cwd:PKG+'\\agent'}},{});
   const r1=await A.checkUsable({},'session-A',[],['session-A'],[]);
-  // ② cwd 正确（＝工作区根 `<包>/local` 的 canonical）⇒ 照旧 alive
-  const B=build({'session-B':{title:'M',cwd:LOCAL}},{});
+  // ② cwd 直接指向物理私人目录 ⇒ alive
+  const B=build({'session-B':{title:'M',cwd:PRIV}},{});
   const r2=await B.checkUsable({},'session-B',[],['session-B'],[]);
-  // ③ 拿不到 cwd（投影缓存读不到）⇒ 放行（不能因为"看不见"就判死）
+  // ③ 旧联接 cwd 的 canonical 虽相同，但沙箱写入仍可能失败 ⇒ stale
+  const E=build({'session-E':{title:'M',cwd:LOCAL}},{});
+  const r5=await E.checkUsable({},'session-E',[],['session-E'],[]);
+  // ④ 拿不到 cwd（投影缓存读不到）⇒ 放行（不能因为"看不见"就判死）
   const C=build({},{});
   const r3=await C.checkUsable({},'session-C',[],[],[]);
-  // ④ 走 sc.list() 那条路（成员表拿不到）时同样判
+  // ⑤ 走 sc.list() 那条路（成员表拿不到）时同样判
   const D=build({},{'session-D':{sessionId:'session-D',cwd:'D:\\old\\ws'}});
   const r4=await D.checkUsable({},'session-D',[],[],[]);
   record('H24_session_cwd_must_be_workspace_root',
-         {mismatch:false,match:true,unknown:true,listMismatch:false},
-         {mismatch:!!r1.alive,match:!!r2.alive,unknown:!!r3.alive,listMismatch:!!r4.alive});
-  // ⑤ 有了可用的新会话之后，因 cwd 被弃用的那些**归档掉**，并清掉还指着它的槽/锚点
+         {mismatch:false,match:true,alias:false,unknown:true,listMismatch:false},
+         {mismatch:!!r1.alive,match:!!r2.alive,alias:!!r5.alive,unknown:!!r3.alive,listMismatch:!!r4.alive});
+  // ⑥ 有了可用的新会话之后，因 cwd 被弃用的那些**归档掉**，并清掉还指着它的槽/锚点
   S.sessParatera='session-A';
   const A2=build({'session-A':{title:'M',cwd:PKG+'\\agent'}},{});
   await A2.checkUsable({},'session-A',[],['session-A'],[]);
@@ -282,5 +293,6 @@ function loadStateWith(S, files, stateFile, stateOld, saveCalls) {
            step: (bad.r.steps || []).some((s) => String(s).indexOf('dispatch-retarget:') === 0),
            trustedNoRetarget: !!good.r.retargeted, trustedKeepsId: good.r.sessionId });
 }
-fs.writeFileSync(path.join(dir,'host-behavior-results.json'),JSON.stringify(results,null,2));
-console.log(JSON.stringify(results,null,2));
+const failures = results.filter((r) => !r.pass)
+console.log(JSON.stringify({ total: results.length, passed: results.length - failures.length, failures }, null, 2))
+if (failures.length) process.exitCode = 1

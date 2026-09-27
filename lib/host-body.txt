@@ -42,10 +42,7 @@ const STATE_SCHEMA = 2;
 // 主 agent 的工作区 path ＝ 它的会话 cwd（2026-09-13 迁移）：
 // DSH 沙箱只允许写「会话自己的 cwd」，而 sessionController.create 不允许同时给
 // workspaceId 和 cwd（给了 workspaceId，cwd 就取工作区 path）→ 一个常量管两件事。
-// A34（2026-09-27）：**缺省改成包内 `agent/`** —— 说明书 `agent/docs/`、工具箱 `agent/tools/`、
-//   产物 `agent/output/` 都在这棵树里，陌生人装完不需要任何包外目录就能开工（以前缺省退到
-//   数据目录下的 workspace，于是说明书和工具箱只能靠部署方自己摆）。
-//   部署方用 `config.agentCwd` 指到自己的目录（例如个人 profile 目录），个人数据就都落那边。
+// 加载器默认把 cwd 设为包外私人 profile 的物理路径；包内 `agent/` 只放说明书与工具。
 const AGENT_ROOT = DIR.replace(/[\\/]lib[\\/]?$/, '') + '\\agent';
 const AGENT_CWD = (typeof CF.agentCwd === 'string' && CF.agentCwd) ? CF.agentCwd : AGENT_ROOT;
 //: **默认数据来源目录**（2026-09-25「装完就能用」）：把聊天导出（*.txt / *.md / *.json）丢进这里，
@@ -97,7 +94,7 @@ const WAKE_GENERIC = [
 //   而且会把"某个人的目录"带进随包发布的通用提示词）。
 //   `{pkg}` 包目录 ｜ `{agent}` 主 agent 工作区 ｜ `{profile}` 个人目录 ｜ `{inbox}` 来源目录
 //   ｜ `{py}` 用哪个 python ｜ `{date}` / `{mode}` 本轮。
-const TPL = (s, date, mode) => String(s || '')
+const TPL = (s, date, mode, since) => String(s || '')
   .replace(/\{pkg\}/g, String((typeof CF.pkgDir === 'string' && CF.pkgDir) || ''))
   .replace(/\{agent\}/g, AGENT_ROOT)          // A36：{agent}＝包内只读骨架（说明书模板 + 工具箱）
   .replace(/\{work\}/g, AGENT_CWD)              // A36：{work}＝会话工作区（＝私人文件夹，可写）
@@ -105,7 +102,10 @@ const TPL = (s, date, mode) => String(s || '')
   .replace(/\{inbox\}/g, INBOX_DIR)
   .replace(/\{py\}/g, String((typeof CF.python === 'string' && CF.python) || 'python'))
   .replace(/\{date\}/g, String(date || ''))
-  .replace(/\{mode\}/g, String(mode || ''));
+  .replace(/\{mode\}/g, String(mode || ''))
+  .replace(/\{since\}/g, Number(since) > 0
+    ? new Date(Number(since) + 8 * 3600 * 1000).toISOString().slice(0, 16).replace('T', ' ') + ' CST'
+    : '无（首次运行）');
 
 const DEMO_ITEMS = [];   // 内置演示数据已清空（2026-09-25）：新装的面板从空开始，由你的取数管线填
 
@@ -257,6 +257,27 @@ return {
           try { while (saveDirty) { saveDirty = false; await saveState() } } finally { saving = null }
         })();
         return saving;
+      };
+      // ── A65（2026-09-27 实测）：**取数明确失败的那一轮，不许前移采集游标** ────────────────────
+      //: 现场：17:33 那一轮 `output/daily/2026-09-27/_run.json` 是 `ok:false`（第 1 步微信解密 exit=1），
+      //:   但主 agent 照样回写了面板 ⇒ 按老判据「面板被回写 = 交付成功」把基准前移到 17:33:36。
+      //:   用户看到的现象就是"上次采集＝我点的那次，可那一轮什么都没跑出来"。
+      //: 判据：那一轮的 `_run.json` **存在且 `ok === false`** ⇒ 不前移，并把原因写进 note。
+      //:   `_run.json` **不存在**（例如没有管线的纯 inbox 用法）⇒ 不作判断，照旧前移 —— 否则会把
+      //:   全新安装的"读 inbox"工作流一刀切死。
+      const collectRunFailed = async (day) => {
+        const d = String(day || '');
+        if (!d) return '';
+        try {
+          const p = AGENT_CWD + '\\output\\daily\\' + d + '\\_run.json';
+          const txt = await fsSvc.readText(await fsSvc.resolve(p));
+          const j = JSON.parse(txt);
+          if (j && j.ok === false) {
+            const bad = (Array.isArray(j.failed) ? j.failed : []).map(String).filter(Boolean);
+            return bad.length ? bad.join(' / ') : '关键步骤失败';
+          }
+        } catch (e) { /* 读不到/解析不了 ⇒ 不判断（fail-open，见上） */ }
+        return '';
       };
       const saveState = async () => {
         try {
@@ -514,7 +535,7 @@ const AGENT_PRESET = (typeof CF.agentPreset === 'string') ? CF.agentPreset : '';
         return presetOk;
       };
       // ── A63（2026-09-27 实测事故）：**派发前必须确认"这条会话是当前 cwd 时代建的"** ──────────
-      //: 事故现场：16:13:39 用户点「获取」，那一轮被发进了 `session-24ffb007` —— 一条 cwd＝包内
+      //: 事故现场：用户点「获取」，那一轮被发进了一条 cwd＝包内
       //:   `agent/` 的老会话（`busyFor` 就是它）。它的可写边界是**包目录**（DSH 的可写根＝
       //:   canonical(会话 cwd)）⇒ 管线产物一个字都写不出来，整轮白跑；而且它把写权限探针
       //:   （`_probe_write.py` / `_probe_ws.txt`）**写进了包里**。
@@ -561,7 +582,8 @@ const AGENT_PRESET = (typeof CF.agentPreset === 'string') ? CF.agentPreset : '';
       //:   老会话的 cwd 是**建会话那一刻定死的、DSH 不许改**（`ensureSession` 末端无条件比对
       //:   `header.cwd !== cwd` ⇒ 抛 `ApiSessionCwdConflict`）⇒ 唯一出路是**不复用它**、另建一个。
       //:   "重启就能修好"错在这：插件只在建会话时给 cwd，判活从不看 cwd ⇒ 1.4.x 升上来的机器一直被复用。
-      //:   判据：两边都取 canonical 再比；**任何一侧拿不到就放行**（fail-open）—— 存疑判死会重演 A29 那次
+      //:   判据：可见的 cwd 必须直接指向物理私人目录；联接的 canonical 相同仍不可复用。
+      //:   拿不到 cwd 时放行（fail-open）—— 存疑判死会重演 A29 那次
       //:   「两个主 agent」事故（"未知"不等于"死了"）。
       const cwdCanon = async (p) => {
         const raw = String(p || '');
@@ -573,7 +595,8 @@ const AGENT_PRESET = (typeof CF.agentPreset === 'string') ? CF.agentPreset : '';
         } catch (e) { return raw }
       };
       const samePath = (a, b) => {
-        const x = String(a || '').replace(/[\\/]+$/, ''), y = String(b || '').replace(/[\\/]+$/, '');
+        const x = String(a || '').replace(/[\\/]+/g, '/').replace(/\/+$/, '');
+        const y = String(b || '').replace(/[\\/]+/g, '/').replace(/\/+$/, '');
         if (!x || !y) return false;
         const caseless = (typeof process !== 'undefined' && process.platform === 'win32');
         return caseless ? (x.toLowerCase() === y.toLowerCase()) : (x === y);
@@ -582,6 +605,7 @@ const AGENT_PRESET = (typeof CF.agentPreset === 'string') ? CF.agentPreset : '';
       const cwdOk = async (sum, meta) => {
         const raw = String((sum && sum.cwd) || (meta && meta.cwd) || '');
         if (!raw) return true;                                   // 拿不到 cwd ⇒ 放行
+        if (!samePath(raw, AGENT_CWD)) return false;             // 联接 cwd 即使指向同处，沙箱仍可能拒写
         const got = await cwdCanon(raw);
         const want = await cwdCanon(AGENT_CWD);
         if (!got || !want) return true;
@@ -1245,6 +1269,7 @@ const AGENT_PRESET = (typeof CF.agentPreset === 'string') ? CF.agentPreset : '';
 // 部署方放 `local/round.md` 覆盖（支持 `{date}` / `{mode}` 占位符）。
 const ROUND_GENERIC = (date, mode) => [
   "【聊天摘要 · 本轮】日期 {date}，模式 {mode}。",
+  "上次成功交付：{since}。从这个时间继续；中间有断档就逐日补齐。",
   "",
   "1) **取数**：读 `{inbox}` 下递归的 `*.txt` / `*.md` / `*.json`。跑没跑**以读到的产物为准**，不凭印象；",
   "   目录是空的就照实说。部署方另有规程的，以规程为准。",
@@ -1253,8 +1278,8 @@ const ROUND_GENERIC = (date, mode) => [
   "4) **回报**：读到了什么、写了哪几条、哪些没做成。",
 ].join('\n');const roundPrompt = (date, reason, since, mode) => {
   const tpl = (typeof CF.roundText === 'string' && CF.roundText) ? CF.roundText : '';
-  if (tpl) return TPL(tpl, date, mode);   // A35：走 TPL，{agent}/{pkg}/{profile}/{py} 与 {date}/{mode}/{inbox} 一起渲染
-  return ROUND_GENERIC(date, mode);
+  if (tpl) return TPL(tpl, date, mode, since);
+  return TPL(ROUND_GENERIC(date, mode), date, mode, since);
 };
 
       const turnEnds = async (sc, sid) => {
@@ -2025,7 +2050,12 @@ const ROUND_GENERIC = (date, mode) => [
         //   只有这时才把"已请求、未交付"的采集窗口提交成已完成游标（`lastCollectAt`/`collectDay`）。
         //   异常结束、用户中止、重启都不提交 ⇒ 未完成窗口会在下一轮被重新覆盖，不留空洞。
         let committed = null;
-        if (S.pendingCollect && S.pendingCollect.day && S.items.length > 0) {
+        // A65：取数明确失败的一轮不许前移游标（判据与理由见 collectRunFailed）
+        const runFail = (S.pendingCollect && S.pendingCollect.day) ? await collectRunFailed(S.pendingCollect.day) : '';
+        if (runFail) {
+          S.note = '这一轮取数失败（' + runFail + '）⇒ 采集基准未前移，可再点一次「获取」（' + cstHM() + '）';
+          S.pendingCollect = null;
+        } else if (S.pendingCollect && S.pendingCollect.day && S.items.length > 0) {
           S.lastCollectAt = Number(S.pendingCollect.at) || Date.now();
           S.collectDay = String(S.pendingCollect.day);
           S.lastDoneAt = Date.now();
@@ -2095,7 +2125,12 @@ const ROUND_GENERIC = (date, mode) => [
         S.items = list;
         // A04：交付成功（补丁后仍非空）才提交采集游标 —— 与 /items 同一判据。
         let committed = null;
-        if (S.pendingCollect && S.pendingCollect.day && S.items.length > 0) {
+        // A65：取数明确失败的一轮不许前移游标（判据与理由见 collectRunFailed）
+        const runFail = (S.pendingCollect && S.pendingCollect.day) ? await collectRunFailed(S.pendingCollect.day) : '';
+        if (runFail) {
+          S.note = '这一轮取数失败（' + runFail + '）⇒ 采集基准未前移，可再点一次「获取」（' + cstHM() + '）';
+          S.pendingCollect = null;
+        } else if (S.pendingCollect && S.pendingCollect.day && S.items.length > 0) {
           S.lastCollectAt = Number(S.pendingCollect.at) || Date.now();
           S.collectDay = String(S.pendingCollect.day);
           S.lastDoneAt = Date.now();
