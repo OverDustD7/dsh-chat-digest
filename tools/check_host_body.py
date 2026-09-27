@@ -217,12 +217,12 @@ for frag in ("const DIR =", "const WAKE_TEXT =", "apply(ctx)",
              # A34（2026-09-27）：说明书与工具箱进包 —— 提示词里的路径改成占位符；主 agent 工作区
              #   缺省＝包内 `agent/`（说明书 docs/ + 工具箱 tools/ + 产物 output/ 都在这棵树里）。
              #   丢了这两条，通用提示词又会退回"写死某个人的目录"，别人装完还是跑不起来。
-             "const TPL = (s, date, mode)", "{pkg}", "{agent}", "{profile}", "{py}",
+             "const TPL = (s, date, mode, since)", "{pkg}", "{agent}", "{profile}", "{py}", "{since}",
              # A36（2026-09-27）：{agent}＝包内只读骨架；{work}＝会话工作区（私人文件夹）
              ".replace(/\\{agent\\}/g, AGENT_ROOT)", ".replace(/\\{work\\}/g, AGENT_CWD)",
              "const AGENT_ROOT",
              # A35（2026-09-27）：round 提示词也走 TPL（原来只换 date/mode/inbox，17 个路径占位符原样发出去）。
-             "if (tpl) return TPL(tpl, date, mode)",
+             "const body = tpl ? TPL(tpl, date, mode, since)",
              # （`linkProfileIntoAgent` / `DSH_CHAT_FEED_LOCAL` 在 lib/plugin.js 里，不在 host body 里 ——
              #   那个文件由 `npm run check` 的 node --check 覆盖。）
              "wakeText: slim ? '' : TPL(WAKE_TEXT)",
@@ -246,7 +246,13 @@ for frag in ("const DIR =", "const WAKE_TEXT =", "apply(ctx)",
              #   配套探针 H26。
              "const cwdTrust = (id)", "const cwdTrustNote = (id)", "dispatch-untrusted:",
              "dispatch-retarget:", "retargeted: true", "cwdTag: String(S.cwdTag || '')",
-             "cwdMade: Array.isArray(S.cwdMade)"):
+             "cwdMade: Array.isArray(S.cwdMade)",
+
+             # A64（2026-09-27）：**触发原因与提问规则由代码注入，模板不许写死**。
+             #   私人 `round.md` 里那句写死的"本轮是自动/补跑触发的，绝对不许提问"被每一轮用上 ⇒
+             #   手动轮也被当成自动轮；而"自动轮禁问"的判据住在可被覆盖的私人文本里（换掉就丢规则）。
+             "【提问规则·代码注入】", "只有这种轮允许提问",
+             "const body = tpl ? TPL(tpl, date, mode, since)", "return TPL(body + ask, date, mode, since)"):
     check("片段仍在: %s" % frag, frag in body)
 
 with io.open(CHK, "w", encoding="utf-8", newline="\n") as f:
