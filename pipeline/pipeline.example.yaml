@@ -35,3 +35,13 @@ output_dir: 'C:\path\to\your\pipeline-workspace\output'
 
 # ── 只保留这些群（留空 = 不筛）───────────────────────────────────────
 groups: []
+
+# ── A35（2026-09-27）：下面这几个键**都不用配**，缺省就在插件目录里 ──────────────
+#   work_dir      管线读写的工作区根；缺省＝<插件目录>/agent
+#   output_dir    产物根；缺省＝<插件目录>/agent/output
+#   python        跑管线/工具用哪个解释器；缺省＝宿主缺省或 PATH 里的 python
+#   external_dir  **包外第三方工具**的根目录（只有你要跑内置取数管线时才需要）：
+#                   微信库解密：<external_dir>/WeChatDataAnalysis
+#                   QQ 库导出： <external_dir>/nt_msg_db_util/3.export.py
+#                 这两个是第三方项目（体积 240 MB / 16 MB），不随本包发布；
+#                 不用内置管线的人完全不需要它们。

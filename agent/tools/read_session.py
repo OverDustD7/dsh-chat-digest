@@ -30,7 +30,7 @@ except Exception:  # noqa: BLE001
 def load(path):
     raw = io.open(path, "rb").read()
     if _zstd is None:
-        raise SystemExit("这个 Python 没有 zstd 支持（试 C:\\Python314\\python.exe）")
+        raise SystemExit("这个 Python 没有 zstd 支持（换一个带 zstd 支持的 python）")
     if hasattr(_zstd, "decompress"):
         try:
             data = _zstd.decompress(raw)
