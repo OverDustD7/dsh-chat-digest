@@ -225,7 +225,19 @@ for frag in ("const DIR =", "const WAKE_TEXT =", "apply(ctx)",
              "if (tpl) return TPL(tpl, date, mode)",
              # （`linkProfileIntoAgent` / `DSH_CHAT_FEED_LOCAL` 在 lib/plugin.js 里，不在 host body 里 ——
              #   那个文件由 `npm run check` 的 node --check 覆盖。）
-             "wakeText: slim ? '' : TPL(WAKE_TEXT)"):
+             "wakeText: slim ? '' : TPL(WAKE_TEXT)",
+
+             # A61（2026-09-27 用户定案 A）：**会话 cwd 必须是它的工作区根** —— 判活与所有认领口一律判它。
+             #   为什么：DSH 的可写根＝canonical(会话 cwd)，而写放行看**目标的 realpath**；插件目录里
+             #   `agent/output`、`agent/docs/{knowledge,archive}` 是**联接**，realpath 落在私人 profile 里
+             #   ⇒ 会话 cwd 不是私人 profile（对外＝`<包>/local`）时，主 agent 写产物必被拒
+             #   （实测 2026-09-27 12:02:59 `PermissionError [Errno 13] …\agent\output\logs\_last_http.json`）。
+             #   而 DSH **不许改**会话 cwd（`ensureSession` 撞 `ApiSessionCwdConflict`）⇒ 只能不复用它。
+             #   判据拿不到 cwd 时**放行**（fail-open）—— 存疑判死会重演 A29 那次「两个主 agent」事故。
+             #   配套探针 H24/H25。丢了这段，1.4.x 升上来的机器又会"重启也修不好"。
+             "const cwdCanon = async", "const cwdOk = async", "stale:cwd:",
+             "adopt:' + tag + ':cwd-stale", "const retireCwdStale = async", "retired-cwd:",
+             "await retireCwdStale(steps, [id])", "await retireCwdStale(steps, [made])"):
     check("片段仍在: %s" % frag, frag in body)
 
 with io.open(CHK, "w", encoding="utf-8", newline="\n") as f:

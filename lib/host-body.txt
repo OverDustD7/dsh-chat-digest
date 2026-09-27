@@ -521,6 +521,69 @@ const AGENT_PRESET = (typeof CF.agentPreset === 'string') ? CF.agentPreset : '';
         } else tag('preset:none');
         return await sc.create(base);
       };
+      // ── A61（2026-09-27，用户定案 A）：**会话 cwd 必须是它的工作区根**，判活时一并判 ──────────────
+      //: 为什么必须判：DSH 的可写根＝canonical(会话 cwd)（`dsh-sandbox-policy` 的 `resolveWorkspaceRoot`），
+      //:   而写放行看**目标的 realpath**（`dsh-fs-sandbox` 的 `checkedTarget`）。插件目录里那几个位置
+      //:   （`agent/output`、`agent/docs/{knowledge,archive}`）是**联接**，realpath 落在私人 profile 里
+      //:   ⇒ 只要会话 cwd 不是私人 profile（对外＝`<包>/local`），主 agent 写产物必被拒。
+      //:   实测（2026-09-27 12:02:59，那条会话 cwd＝包内 `agent/`）：
+      //:     SAVE-FAILED(PermissionError: [Errno 13] … \agent\output\logs\_last_http.json)
+      //:   老会话的 cwd 是**建会话那一刻定死的、DSH 不许改**（`ensureSession` 末端无条件比对
+      //:   `header.cwd !== cwd` ⇒ 抛 `ApiSessionCwdConflict`）⇒ 唯一出路是**不复用它**、另建一个。
+      //:   "重启就能修好"错在这：插件只在建会话时给 cwd，判活从不看 cwd ⇒ 1.4.x 升上来的机器一直被复用。
+      //:   判据：两边都取 canonical 再比；**任何一侧拿不到就放行**（fail-open）—— 存疑判死会重演 A29 那次
+      //:   「两个主 agent」事故（"未知"不等于"死了"）。
+      const cwdCanon = async (p) => {
+        const raw = String(p || '');
+        if (!raw) return '';
+        try {
+          const r = (fsSvc && fsSvc.resolve) ? await fsSvc.resolve(raw) : null;
+          const key = r && (r.targetKey || r.path || r.displayPath);
+          return String(key || raw);
+        } catch (e) { return raw }
+      };
+      const samePath = (a, b) => {
+        const x = String(a || '').replace(/[\\/]+$/, ''), y = String(b || '').replace(/[\\/]+$/, '');
+        if (!x || !y) return false;
+        const caseless = (typeof process !== 'undefined' && process.platform === 'win32');
+        return caseless ? (x.toLowerCase() === y.toLowerCase()) : (x === y);
+      };
+      //: 这条会话的 cwd 对不对。`sum`＝`sc.list()` 的条目（带 `cwd`），`meta`＝投影缓存（带 `cwd`）。
+      const cwdOk = async (sum, meta) => {
+        const raw = String((sum && sum.cwd) || (meta && meta.cwd) || '');
+        if (!raw) return true;                                   // 拿不到 cwd ⇒ 放行
+        const got = await cwdCanon(raw);
+        const want = await cwdCanon(AGENT_CWD);
+        if (!got || !want) return true;
+        return samePath(got, want);
+      };
+      //: cwd 不对的会话**再也不能**用来取数（写产物必被拒）⇒ 登记下来，等有了能用的会话再归档，
+      //:   免得侧栏越堆越多（A23 那次用户问的就是"为什么多了一堆主 agent"）。
+      const cwdStale = [];
+      const noteCwdStale = (id) => {
+        const s = String(id || '');
+        if (s && cwdStale.indexOf(s) < 0 && cwdStale.length < 20) cwdStale.push(s);
+      };
+      const retireCwdStale = async (steps, keepIds) => {
+        const wc = ctx.get('workspaceController');
+        if (!wc || !wc.archiveSession || !cwdStale.length) return 0;
+        const keep = (keepIds || []).map(String);
+        const todo = cwdStale.splice(0, cwdStale.length);
+        let n = 0;
+        for (let i = 0; i < todo.length; i++) {
+          const id = String(todo[i]);
+          if (!id || keep.indexOf(id) >= 0) continue;
+          try {
+            await wc.archiveSession({ sessionId: id });
+            n += 1; steps.push('retired-cwd:' + id.slice(0, 12));
+            if (String(S.sessThu || '') === id) S.sessThu = '';
+            if (String(S.sessParatera || '') === id) S.sessParatera = '';
+            if (String(S.mainSessionId || '') === id) S.mainSessionId = String(S.sessionId || '');
+          } catch (e) { steps.push('retire-cwd-err:' + String((e && e.message) || e).slice(0, 30)) }
+        }
+        if (n) { try { await saveState() } catch (e) {} }
+        return n;
+      };
       const checkUsable = async (sc, id, steps, wsIds, arch) => {
         // **首选工作区成员表**（`wc.create().workspace.sessionIds`，不分页、最权威）。
         // 2026-09-17 晚实测出锅：这里原来只看 `sc.list()`，而它是**分页**的 ⇒ 槽会话不在第一页就被判
@@ -530,12 +593,23 @@ const AGENT_PRESET = (typeof CF.agentPreset === 'string') ? CF.agentPreset : '';
           const list = (wsIds || []).map(String);
           const dead = (arch || []).map(String);
           if (list.length && list.indexOf(String(id)) >= 0 && dead.indexOf(String(id)) < 0) {
-            steps.push('alive:ws-member'); return { alive: true, needWake: false };
+            // A61：成员表只说明"活着"，**不说 cwd 对不对** —— 这条捷径也得过一遍 cwd 判据，
+            //   否则旧 cwd 的会话永远走不到下面那次体检（这正是"重启也修不好"的机制）。
+            const m0 = await sessionMeta(fsSvc, String(id));
+            if (await cwdOk(null, m0)) { steps.push('alive:ws-member'); return { alive: true, needWake: false } }
+            noteCwdStale(id);
+            steps.push('stale:cwd:' + String((m0 && m0.cwd) || '?').slice(-34));
+            return { alive: false, needWake: false };
           }
         } catch (e) {}
         const sum = await sessionSummary(sc, id);
         if (sum === undefined) { steps.push('alive:list-unavailable'); return { alive: true, needWake: false } }
         if (sum === null) { steps.push('stale:list-missing'); return { alive: false, needWake: false } }
+        if (!(await cwdOk(sum, null))) {
+          noteCwdStale(id);
+          steps.push('stale:cwd:' + String(sum.cwd || '?').slice(-34));
+          return { alive: false, needWake: false };
+        }
         if (sum.blank === true) { steps.push('alive:blank-needs-wake'); return { alive: true, needWake: true } }
         steps.push('alive:ok');
         return { alive: true, needWake: false };
@@ -555,7 +629,10 @@ const AGENT_PRESET = (typeof CF.agentPreset === 'string') ? CF.agentPreset : '';
           try { title = String(rec.rows.title.val || '') } catch (e) {}
           let blank = false;
           try { blank = rec.rows.sessionListMetadata.val.blank === true } catch (e) {}
-          return { createdAt: Number(ident.createdAt) || 0, title: title, blank: blank };
+          //: A61：cwd 也在这里 —— 它决定"这条会话还能不能写产物"（见下面 cwdOk 的说明）。
+          let cwd = '';
+          try { cwd = String(ident.cwd || '') } catch (e) {}
+          return { createdAt: Number(ident.createdAt) || 0, title: title, blank: blank, cwd: cwd };
         } catch (e) { return null }
       };
 
@@ -587,7 +664,8 @@ const AGENT_PRESET = (typeof CF.agentPreset === 'string') ? CF.agentPreset : '';
           if (!id.startsWith('session-')) continue;
           if (dead.indexOf(id) >= 0) continue;              // 已归档：绝不再认领
           const meta = await sessionMeta(ctx.get('fs'), id);
-          if (meta && isMainTitle(meta.title)) cands.push({ id: id, createdAt: meta.createdAt || 0 });
+          // A61：cwd 不对的主 agent 不再认领（认回来也写不出产物）。
+          if (meta && isMainTitle(meta.title) && (await cwdOk(null, meta))) cands.push({ id: id, createdAt: meta.createdAt || 0 });
         }
         if (!cands.length) return '';
         cands.sort((a, b) => a.createdAt - b.createdAt);
@@ -639,6 +717,9 @@ const AGENT_PRESET = (typeof CF.agentPreset === 'string') ? CF.agentPreset : '';
           const sum = await sessionSummary(sc, id);
           if (!sum || !sum.sessionId) { steps.push('adopt:' + tag + ':missing'); return }
           const meta = await sessionMeta(ctx.get('fs'), String(id));
+          // A61：cwd 不对的（含"锚点还指着旧 cwd 那条"）不认领 —— 认回来主 agent 照样写不出产物，
+          //   然后下一轮又判死，来回折腾。
+          if (!(await cwdOk(sum, meta))) { noteCwdStale(id); steps.push('adopt:' + tag + ':cwd-stale'); return }
           alive.push({ tag: tag, id: String(id), meta: meta, createdAt: (meta && meta.createdAt) || 0, title: (meta && meta.title) || '' });
         };
         if (S.mainSessionId) await consider('anchor', String(S.mainSessionId));
@@ -720,6 +801,7 @@ const AGENT_PRESET = (typeof CF.agentPreset === 'string') ? CF.agentPreset : '';
             // 锚点为空或指着已归档会话时跟着新会话走（否则 mainSessionId 会停在死会话上）
             if (!S.mainSessionId || (archA && archA.indexOf(String(S.mainSessionId)) >= 0)) { S.mainSessionId = id; steps.push('anchor-set:' + id.slice(0, 12)) }
             steps.push('created:' + id.slice(0, 12)); steps.push('persist:' + (await saveState()));
+            await retireCwdStale(steps, [id]);                  // A61：有了 cwd 正确的新会话，退掉旧 cwd 的那些
           } catch (e) { return { ok: false, error: 'create 失败：' + String((e && e.message) || e), steps } }
         } else {
           // 归档表要在体检**之前**取（checkUsable 要用它排除"成员表里含已归档会话"这个已知情形）
@@ -759,6 +841,7 @@ const AGENT_PRESET = (typeof CF.agentPreset === 'string') ? CF.agentPreset : '';
               // 锚点为空或指着已归档会话时跟着新会话走（否则 mainSessionId 会停在死会话上）
               if (!S.mainSessionId || (archA && archA.indexOf(String(S.mainSessionId)) >= 0)) { S.mainSessionId = id; steps.push('anchor-set:' + id.slice(0, 12)) }
               steps.push('created:' + id.slice(0, 12)); steps.push('persist:' + (await saveState()));
+              await retireCwdStale(steps, [id]);                // A61：同上
             } catch (e) { return { ok: false, error: 'create 失败：' + String((e && e.message) || e), steps } }
           }
         }
@@ -1216,9 +1299,17 @@ const ROUND_GENERIC = (date, mode) => [
       const liveOk = async (sc, id, wc) => {
         if (!id) return false;
         const ids = await wsSessionIds(wc);
-        if (ids && ids.indexOf(String(id)) >= 0) return true;    // 在工作区里 ⇒ 活着
+        if (ids && ids.indexOf(String(id)) >= 0) {
+          // A61：成员表只说"活着"。cwd 不对 ⇒ 这条会话再也写不出产物 ⇒ **不算可用**（登记待归档）。
+          const m0 = await sessionMeta(fsSvc, String(id));
+          if (await cwdOk(null, m0)) return true;
+          noteCwdStale(id); return false;
+        }
         const s = await sessionSummary(sc, id);
-        if (s && s.sessionId) return true;                      // 列表里能找到也算
+        if (s && s.sessionId) {
+          if (await cwdOk(s, null)) return true;
+          noteCwdStale(id); return false;
+        }
         // A29（2026-09-26 事故）：**「查不到」不等于「死了」**。控制器或工作区名单不可用时返回 null
         //   （未知）—— 调用方不许据此清空槽、更不许拿别的会话顶替。事故现场：刚重启、工作区控制器
         //   还没就绪 ⇒ 这里返回 false ⇒ 活着的会话被判 stale ⇒ 清槽 ⇒ paratera 槽被「当前会话」
@@ -1290,7 +1381,8 @@ const ROUND_GENERIC = (date, mode) => [
           if (skip.indexOf(id) >= 0) continue;
           const meta = await sessionMeta(ctx.get('fs'), id);
           const want = Array.isArray(title) ? title : [title];
-          if (meta && want.indexOf(String(meta.title)) >= 0) cands.push({ id: id, createdAt: (meta.createdAt || 0) });
+          // A61：槽也只认领 cwd 对的会话（旧 cwd 的槽会话写不出产物 ⇒ 认回来等于白认）。
+          if (meta && want.indexOf(String(meta.title)) >= 0 && (await cwdOk(null, meta))) cands.push({ id: id, createdAt: (meta.createdAt || 0) });
         }
         if (!cands.length) return '';
         cands.sort((a, b) => b.createdAt - a.createdAt);      // 最新优先：新的那个更干净（老的那个可能沾过别的线路）
@@ -1324,6 +1416,7 @@ const ROUND_GENERIC = (date, mode) => [
         if (!sc || !wc) { steps.push('create:skip:controllers-missing'); return '' }
         const made = await createRouteSession(route, steps);
         if (made) S[key] = made;
+        if (made) await retireCwdStale(steps, [made]);        // A61：有了 cwd 正确的新槽会话，退掉旧 cwd 的那些
         return made;
       };
       const pickRoute = async (route, why) => {
