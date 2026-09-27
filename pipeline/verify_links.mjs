@@ -3,7 +3,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-const HERE = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1")), "..");
+const HERE = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1")), "..", "agent");   // A35：工作区＝<插件目录>/agent
 const SRC = path.join(HERE, "output", "window", "all_urls.jsonl");
 const OUT = path.join(HERE, "output", "window", "url_check.md");
 

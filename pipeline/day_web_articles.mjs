@@ -17,7 +17,8 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-const HERE = path.dirname(path.dirname(fileURLToPath(import.meta.url)));   // …\工作区
+const PIPE = path.dirname(fileURLToPath(import.meta.url));                       // <插件目录>/pipeline
+const HERE = path.join(path.dirname(PIPE), "agent");                              // 工作区＝<插件目录>/agent（A35）
 const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
@@ -127,7 +128,7 @@ if (WITH_BODY) {
     if (!/mp\.weixin\.qq\.com/.test(it.href)) continue;
     const name = "web_" + it.date + "_" + it.text.replace(/[\\/:*?"<>|\s]+/g, "_").slice(0, 40) + ".md";
     try {
-      execFileSync(process.execPath, [path.join(HERE, "scripts", "fetch_article.mjs"), it.href, path.join(dir, name)],
+      execFileSync(process.execPath, [path.join(PIPE, "fetch_article.mjs"), it.href, path.join(dir, name)],
         { stdio: "ignore", timeout: 60000 });
       it.body = fs.existsSync(path.join(dir, name)) ? name : "";
     } catch (e) { it.body = ""; }

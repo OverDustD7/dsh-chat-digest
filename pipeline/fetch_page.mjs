@@ -16,7 +16,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { cfg } from "./pconf.mjs";
 
-const HERE = path.dirname(path.dirname(fileURLToPath(import.meta.url)));   // …\工作区
+const PIPE = path.dirname(fileURLToPath(import.meta.url));                       // <插件目录>/pipeline
+const HERE = path.join(path.dirname(PIPE), "agent");                              // 工作区＝<插件目录>/agent（A35）
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
 const argv = process.argv.slice(2);

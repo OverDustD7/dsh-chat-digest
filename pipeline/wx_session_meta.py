@@ -13,17 +13,17 @@ Output: output/window/session_meta.json
 import os as _os
 import sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
-from pconf import C  # noqa: E402
+from pconf import (C, agent_root, scripts_dir, work_dir, python_exe, external_tool, out_dir)  # noqa: E402
 
 WX_ACCOUNT_DIR = C.get("wx_account_dir")
 WX_MSG_GLOB = C.get("wx_msg_glob")
 WX_KEY_DIR = C.get("wx_key_dir")
 QQ_DATA_DIR = C.get("qq_data_dir")
-WORK_DIR = C.get("work_dir")
+WORK_DIR = work_dir()
 SELF_WXID = C.get("self_wxid")
 MAIN_GROUP = C.get("main_group")
 
-OUT_DIR = C.get("output_dir")
+OUT_DIR = out_dir()
 GROUPS = C.groups
 # ────────────────────────────────────────────────────────────────────────────
 import json
@@ -33,7 +33,7 @@ import sys
 from collections import defaultdict
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+HERE = agent_root()
 OUT = os.path.join(HERE, "output", "window", "session_meta.json")
 # ⚠ 2026-09-14 修正：原表是 {1:"免打扰", 0:"正常"}，与实测取值完全错位
 # （脚本自己 docstring 写的是 1=正常/2=免打扰/3=待确认，代码却把 1 标成免打扰）。

@@ -71,7 +71,7 @@
 > - **什么时候给**：`found:true` 的才给链接（他点得开）；文件类消息**一律给链接**；
 >   图片只有重要类（通知/名单/课表/截图）才嵌图，**不要每张都嵌**。
 > - `found:false` 的写"本机没有" —— **不许造链接**（用户 2026-09-20："有一些文件被我移动了，那就是没有"）。
-> - 要读文件正文：`..\venv\Scripts\python.exe tools\read_attachment.py <date> --index N`
+> - 要读文件正文：`python tools\read_attachment.py <date> --index N`
 >   （pdf/docx/xlsx/pptx/txt 可提正文；音视频**本线不转写**，只标未读）。
 > 统一为「**一句话总结 + 恰好 1 个空行 + 正文（正文内部一律单换行）**」。
 > **所有写入面板的通道都必须过 `tools\panel_fmt.py` 的 `normalize_text()`**（`panel_append_items.py` / `panel_patch_text.py` 已内置）。

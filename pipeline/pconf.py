@@ -119,3 +119,59 @@ class _Conf(object):
 
 
 C = _Conf()
+
+
+# ── 包内路径解析（A35，2026-09-27）：**插件目录之外一律不碰** ──────────────────
+#   为什么要有这几条：管线脚本原来假设"工作区＝<插件目录>"、脚本在 `<工作区>/scripts`、
+#   解释器在 `<插件目录>/../venv`、包外工具在 `<插件目录>/../WeChatDataAnalysis` ——
+#   换成 npm 安装后这些全都指到了包外（甚至 node_modules），也就是"还在依赖本机文件"。
+def pkg_dir():
+    """插件目录（<pkg>）：本文件住在 <pkg>/pipeline/ 下。"""
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def agent_root():
+    """主 agent 的工作区＝<插件目录>/agent（说明书、工具箱、产物与个人数据都在这一棵树里）。
+    插件目录其余部分只读；插件目录之外不写任何东西。"""
+    return os.path.join(pkg_dir(), 'agent')
+
+
+def scripts_dir():
+    """取数脚本自己所在目录＝<插件目录>/pipeline。"""
+    return os.path.join(pkg_dir(), 'pipeline')
+
+
+def work_dir():
+    """管线读写的工作区根：**缺省＝agent_root()**（不填就是"全在插件目录里"）。
+    `pipeline.yaml` 的 `work_dir` 只在把产物放到别处时才填。"""
+    v = (_Conf_get('work_dir') or '').strip()
+    return v if v else agent_root()
+
+
+def python_exe():
+    """用哪个解释器跑管线：`pipeline.yaml:python` → 环境变量 `DSH_CHAT_FEED_PY`
+    （宿主会把插件配置里的 `python` 导出到这里）→ 当前解释器。缺省不依赖任何固定路径。"""
+    v = (_Conf_get('python') or os.environ.get('DSH_CHAT_FEED_PY') or '').strip()
+    return v if v else (sys.executable or 'python')
+
+
+def external_tool(*parts):
+    """包外工具（WeChatDataAnalysis / nt_msg_db_util 之类）的定位：
+    **缺省不依赖包外** —— 把它们放进插件目录就什么都不用配；要用包外那份，
+    在 `pipeline.yaml` 里给 `external_dir`。"""
+    base = (_Conf_get('external_dir') or '').strip()
+    if not base:
+        sys.stderr.write('[pconf] 这一步需要包外工具 %s：把它放进插件目录，'
+                         '或在 pipeline.yaml 里给 external_dir\n' % os.path.join(*parts))
+        return os.path.join(pkg_dir(), 'vendor', *parts)
+    return os.path.join(base, *parts)
+
+
+def _Conf_get(key):
+    return C.get(key)
+
+
+def out_dir():
+    """产物根：**缺省＝<插件目录>/agent/output**（`pipeline.yaml` 的 `output_dir` 只在放别处时才填）。"""
+    v = (_Conf_get('output_dir') or '').strip()
+    return v if v else os.path.join(agent_root(), 'output')

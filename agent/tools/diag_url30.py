@@ -18,7 +18,8 @@ import sys
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.join(HERE, "scripts"))
+HERE_PIPE = os.path.join(os.path.dirname(HERE), "pipeline")   # A35：取数脚本在 <插件目录>/pipeline（原来指 <agent 根>/scripts，A34 后那里不存在）
+sys.path.insert(0, os.path.join(HERE_PIPE))
 from extract_window import qq_content_summary  # noqa: E402
 
 TZ = dt.timezone(dt.timedelta(hours=8))

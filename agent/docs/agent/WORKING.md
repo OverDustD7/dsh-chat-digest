@@ -727,7 +727,7 @@ Python 脚本会抛 `UnicodeDecodeError`（管道走 cp936）——**同树脚�
   重启后即失效（症状：一路 404，会被误判成"插件没起来"）。改用自带 cookie 签名的客户端：
   ```
   cd agent 根
-  .\..\venv\Scripts\python.exe docs\agent\cf_api.py state
+  python docs\agent\cf_api.py state
   ```
   期望 `HTTP 200` 且带 `items` / `wakeText`；`/chat-feed/ui.js`、`/chat-feed/right.js` 也应 200。
   顺手加一句 `get panel` 看面板结构（`sections`/`count`/`unknown`/`err`）——两行摘要都是纯 ASCII，不会花屏。
@@ -767,7 +767,7 @@ Python 脚本会抛 `UnicodeDecodeError`（管道走 cp936）——**同树脚�
 3. 自证（**现在就能用，不重启、不看 UI**）：
    ```
    cd agent 根
-   .\..\venv\Scripts\python.exe docs\agent\cf_api.py get panel
+   python docs\agent\cf_api.py get panel
    ```
    终端只打一行**纯 ASCII** 摘要，看 `sections=N` / `count[todo:..,chance:..,info:..]` / `unknown=0` / `err=`；
    完整 JSON 落在 `output\logs\_last_http.json`（用 read 工具读，中文不会花屏）。
@@ -822,8 +822,8 @@ Python 脚本会抛 `UnicodeDecodeError`（管道走 cp936）——**同树脚�
 6. **判活两行命令**（每轮唤醒先跑，省得猜）：
    ```
    cd agent 根
-   .\..\venv\Scripts\python.exe docs\agent\cf_api.py state
-   .\..\venv\Scripts\python.exe docs\agent\cf_api.py get panel
+   python docs\agent\cf_api.py state
+   python docs\agent\cf_api.py get panel
    ```
 
 ## 十一novies、2026-09-15：**重做 09-14**（用户授权「可以重做一遍」）——第一次"重做轮"
@@ -872,7 +872,7 @@ Python 脚本会抛 `UnicodeDecodeError`（管道走 cp936）——**同树脚�
    `tools\prepass_audit.py`（六项自检）、`tools\anchor_read.py`（**按锚点回原文核**，阶段 5 的唯一手段）；
    `tools\vision_triage.py` 加**细读遍**（真管线实测 5/5 张、10 秒，09-17 唯一增量就来自它）。
 3. **接手须知（两条，都踩过）**：
-   - **用哪个 python**：从 `agent` 一律 `..\venv\Scripts\python.exe`（＝`agent\venv`）。
+   - **用哪个 python**：一律用**插件配置里的 `python`**（`pipeline.yaml:python` 或宿主导出的 `DSH_CHAT_FEED_PY`；缺省＝PATH 里的 `python`）。A35 起不再假设包外有 venv。
      **裸 `python` 是系统 3.14、不是 venv**；`..\..\venv` 只在 **`scripts\`** 目录下成立。
    - **"0 条"不等于"这块没内容"**：`qwen3.5:9b` 会跑飞到输出 2.5 万 token、耗时 250 秒、返回 0 条，
      **静默丢掉一整块**。判据是**换模型重跑同一块再看差异**，**不是拿词表扫**（原则 18）。

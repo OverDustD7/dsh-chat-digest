@@ -14,26 +14,26 @@ Outputs -> <out_dir>/wx/*_plain.db
 import os as _os
 import sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
-from pconf import C  # noqa: E402
+from pconf import (C, agent_root, scripts_dir, work_dir, python_exe, external_tool, out_dir)  # noqa: E402
 
 WX_ACCOUNT_DIR = C.get("wx_account_dir")
 WX_MSG_GLOB = C.get("wx_msg_glob")
 WX_KEY_DIR = C.get("wx_key_dir")
 QQ_DATA_DIR = C.get("qq_data_dir")
-WORK_DIR = C.get("work_dir")
+WORK_DIR = work_dir()
 SELF_WXID = C.get("self_wxid")
 MAIN_GROUP = C.get("main_group")
 
-OUT_DIR = C.get("output_dir")
+OUT_DIR = out_dir()
 GROUPS = C.groups
 # ────────────────────────────────────────────────────────────────────────────
 import os
 import sys
 import types
 
-HERE = os.path.dirname(os.path.abspath(__file__))          # <工作区>\pipeline
-ROOT = os.path.dirname(HERE)                                # <工作区>
-WX_TOOL = os.path.join(os.path.dirname(ROOT), "WeChatDataAnalysis")   # <上级目录>\WeChatDataAnalysis
+HERE = agent_root()          # <工作区>\pipeline
+ROOT = agent_root()                                # <工作区>
+WX_TOOL = external_tool("WeChatDataAnalysis")   # <上级目录>\WeChatDataAnalysis
 SRC = os.path.join(WX_TOOL, "src")
 PKG_DIR = os.path.join(SRC, "wechat_decrypt_tool")
 

@@ -15,13 +15,14 @@ import sys
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # agent 根
 CI = ROOT
+CI_PIPE = os.path.join(os.path.dirname(CI), "pipeline")   # A35：取数脚本在 <插件目录>/pipeline（原来指 <agent 根>/scripts，A34 后那里不存在）
 CF = os.path.join(ROOT, "chat-feed")
 
 import glob
 
 SRC = []
 # 代码/编排/prompt：这些地方引用缺失 = 真问题
-SRC += [(os.path.join(CI, "scripts", "daily_prep.py"), r"[\w\\/\.]+\.py"),
+SRC += [(os.path.join(CI_PIPE, "daily_prep.py"), r"[\w\\/\.]+\.py"),
         (os.path.join(CF, "tools", "host-v34.body.txt"), r"[\w\\/\.]+\.py")]
 # 文档：全量扫（含 RESTART.md / STATUS.md / DEV_NOTES.md …）
 for pat in (os.path.join(CI, "docs", "**", "*.md"), os.path.join(CF, "*.md"),

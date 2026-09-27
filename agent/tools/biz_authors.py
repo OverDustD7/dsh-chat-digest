@@ -36,6 +36,7 @@ import sys
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+HERE_PIPE = os.path.join(os.path.dirname(HERE), "pipeline")   # A35：取数脚本在 <插件目录>/pipeline（原来指 <agent 根>/scripts，A34 后那里不存在）
 URL_RE = re.compile(r"https?://mp\.weixin\.qq\.com/s\?[^\s\"'<>\\)\]，,；;]+")
 BIZ_RE = re.compile(r"__biz=([A-Za-z0-9=+/]+)")
 CARD_RE = re.compile(r"^-\s+(\d\d:\d\d)\s+\[([^\]]+)\]\s+([^：:]{1,24})[：:]\s*\*\*(.+?)\*\*")
@@ -176,7 +177,7 @@ def fetch_unknown(unknown, limit):
         out = os.path.join(adir, "biz_%s.md" % biz[:16])
         if not os.path.exists(out):
             try:
-                subprocess.run(["node", os.path.join(HERE, "scripts", "fetch_article.mjs"), info["url"], out],
+                subprocess.run(["node", os.path.join(HERE_PIPE, "fetch_article.mjs"), info["url"], out],
                                cwd=HERE, capture_output=True, text=True, encoding="utf-8",
                                errors="replace", timeout=90)
             except Exception as e:  # noqa: BLE001
