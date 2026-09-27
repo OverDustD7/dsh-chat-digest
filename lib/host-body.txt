@@ -277,6 +277,9 @@ return {
             extraMains: Array.isArray(S.extraMains) ? S.extraMains.slice(0, 30) : [], extraMainsAt: Number(S.extraMainsAt || 0),
             // 双会话（2026-09-17）：**这几行少了，重启后槽就空 ⇒ 又重新 adopt/create 一个会话**（实测踩过）
             sessThu: S.sessThu || '', sessParatera: S.sessParatera || '',
+            // A63：派发的正向断言要跨重启活下来（漏进白名单 = 重启后又把一轮发给老 cwd 的会话）
+            cwdTag: String(S.cwdTag || ''),
+            cwdMade: Array.isArray(S.cwdMade) ? S.cwdMade.slice(-12).map(String) : [],
             routePick: S.routePick || '', inbox: INBOX_DIR, routes: ROUTES.map(function (r) { return { id: r.id, label: r.label, menuName: r.menuName || '', hint: r.hint || '', 'default': !!r['default'] } }),
     routeAt: S.routeAt || 0, routeWhy: S.routeWhy || '',
             ctxRatioThu: (S.ctxRatioThu === undefined ? 0.7 : S.ctxRatioThu),
@@ -442,6 +445,9 @@ return {
           //   因为 sessThu/sessParatera 没持久化，**每次重启都重造一个 线路1 会话**）。
           if (j && typeof j.sessThu === 'string') S.sessThu = j.sessThu;
           if (j && typeof j.sessParatera === 'string') S.sessParatera = j.sessParatera;
+          // A63：派发断言的两个字段（同上：漏了它重启后名单就空，第一次派发会白另建一条）
+          if (j && typeof j.cwdTag === 'string') S.cwdTag = j.cwdTag;
+          if (j && Array.isArray(j.cwdMade)) S.cwdMade = j.cwdMade.slice(-12).map(String);
           if (j && typeof j.routePick === 'string' && ((typeof ROUTES !== 'undefined' ? routeIds() : ['thu', 'paratera']).indexOf(j.routePick) >= 0)) S.routePick = j.routePick;
           if (j && j.routeAt) S.routeAt = Number(j.routeAt) || 0;
           if (j && typeof j.routeWhy === 'string') S.routeWhy = j.routeWhy;
@@ -507,19 +513,43 @@ const AGENT_PRESET = (typeof CF.agentPreset === 'string') ? CF.agentPreset : '';
         } catch (e) { presetOk = false }
         return presetOk;
       };
+      // ── A63（2026-09-27 实测事故）：**派发前必须确认"这条会话是当前 cwd 时代建的"** ──────────
+      //: 事故现场：16:13:39 用户点「获取」，那一轮被发进了 `session-24ffb007` —— 一条 cwd＝包内
+      //:   `agent/` 的老会话（`busyFor` 就是它）。它的可写边界是**包目录**（DSH 的可写根＝
+      //:   canonical(会话 cwd)）⇒ 管线产物一个字都写不出来，整轮白跑；而且它把写权限探针
+      //:   （`_probe_write.py` / `_probe_ws.txt`）**写进了包里**。
+      //: 判据上的取舍（这次真正学到的一条）：
+      //:   · **判死/归档**可以 fail-open（拿不到 cwd 就保留现状 —— A29 那次"两个主 agent"的教训）；
+      //:   · **派发一轮**必须 fail-closed（**确认**目标可用才发），而且**不许依赖元数据**：
+      //:     元数据读不到就会 fail-open —— 那正是这次的洞。
+      //:   ⇒ 只认一件事：**本插件在当前 AGENT_CWD 时代亲手建过的会话**（建会话时记进 `S.cwdMade`）。
+      //:     老会话（A61 之前建的）不在名单里 ⇒ 第一次派发就会当场另建一条 cwd 正确的（＝升级自愈）。
+      const cwdTrust = (id) => (String(S.cwdTag || '') === String(AGENT_CWD)) &&
+                               (Array.isArray(S.cwdMade) ? S.cwdMade.map(String) : []).indexOf(String(id)) >= 0;
+      const cwdTrustNote = (id) => {
+        const s = String(id || '');
+        if (!s) return;
+        S.cwdTag = String(AGENT_CWD);
+        const list = (Array.isArray(S.cwdMade) ? S.cwdMade.map(String) : []).filter((x) => x && x !== s);
+        list.push(s);
+        S.cwdMade = list.slice(-12);          // 只记最近 12 条，别让状态文件无界增长
+      };
       const createSession = async (sc, base, steps) => {
         const tag = (steps && steps.push) ? (s) => steps.push(s) : () => {};
         if (await presetUsable()) {
           try {
             const made = await sc.create(Object.assign({}, base, { agentPreset: AGENT_PRESET }));
             tag('preset:' + AGENT_PRESET);
+            cwdTrustNote(made && made.sessionId);            // A63：亲手建过的才算"可信"
             return made;
           } catch (e) {
             presetOk = false;   // 记忆化关掉，后面所有建会话都走降级分支
             tag('preset-fallback:' + String((e && e.message) || e).slice(0, 40));
           }
         } else tag('preset:none');
-        return await sc.create(base);
+        const made2 = await sc.create(base);
+        cwdTrustNote(made2 && made2.sessionId);              // A63
+        return made2;
       };
       // ── A61（2026-09-27，用户定案 A）：**会话 cwd 必须是它的工作区根**，判活时一并判 ──────────────
       //: 为什么必须判：DSH 的可写根＝canonical(会话 cwd)（`dsh-sandbox-policy` 的 `resolveWorkspaceRoot`），
@@ -1425,6 +1455,24 @@ const ROUND_GENERIC = (date, mode) => [
         if (S.busy) return { ok: false, error: '上一轮还在跑（不切会话）', busy: true, steps };
         const id = await ensureRouteSession(r, steps);
         if (!id) return { ok: false, error: '拿不到 ' + r + ' 的会话', steps };
+        // A63（2026-09-27 事故）：**派发前的正向断言** —— 这条会话必须是本插件在当前 AGENT_CWD
+        //   下亲手建过的。不满足（＝老 cwd 的会话，或元数据读不到）就**当场另建一条**再发，
+        //   绝不把一轮发给一条写不出产物的会话（那次它把探针文件写进了包里、产物一个字没出）。
+        if (!cwdTrust(id)) {
+          steps.push('dispatch-untrusted:' + String(id).slice(0, 12));
+          const made = await createRouteSession(r, steps);
+          if (!made) return { ok: false, error: '目标会话不可信（cwd 非当前工作区根）且新建失败', steps };
+          S[routeSlotKey(r)] = made;
+          steps.push('dispatch-retarget:' + String(made).slice(0, 12));
+          await retireCwdStale(steps, [made]);
+          const changed0 = String(S.sessionId || '') !== String(made);
+          S.sessionId = made; S.mainSessionId = made;
+          if (changed0) { S.seeded = false; S.ctxTokens = 0; S.ctxWindow = 0; S.ctxLimit = 0; S.ctxPct = 0 }
+          S.routePick = r; S.routeAt = Date.now();
+          S.routeWhy = String(why || '') + '；目标会话不可信 ⇒ 当场另建';
+          await saveState();
+          return { ok: true, route: r, sessionId: made, changed: changed0, retargeted: true, model: ROUTE_MODELS[r], steps };
+        }
         const changed = String(S.sessionId || '') !== id;
         S.sessionId = id; S.mainSessionId = id;
         S.routePick = r; S.routeAt = Date.now(); S.routeWhy = String(why || '');

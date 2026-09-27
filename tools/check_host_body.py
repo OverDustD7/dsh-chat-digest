@@ -237,7 +237,16 @@ for frag in ("const DIR =", "const WAKE_TEXT =", "apply(ctx)",
              #   配套探针 H24/H25。丢了这段，1.4.x 升上来的机器又会"重启也修不好"。
              "const cwdCanon = async", "const cwdOk = async", "stale:cwd:",
              "adopt:' + tag + ':cwd-stale", "const retireCwdStale = async", "retired-cwd:",
-             "await retireCwdStale(steps, [id])", "await retireCwdStale(steps, [made])"):
+             "await retireCwdStale(steps, [id])", "await retireCwdStale(steps, [made])",
+
+             # A63（2026-09-27 实测事故）：**派发一轮前的正向断言** —— 只把一轮发给"本插件在当前
+             #   AGENT_CWD 下亲手建过的会话"（`S.cwdMade`）。判死可以 fail-open，**派发必须 fail-closed
+             #   且不依赖元数据**（元数据读不到就会放行 —— 那正是这次的洞）。事故：16:13:39 那一轮被
+             #   发进 cwd＝包内 `agent/` 的老会话，产物一个字写不出、探针文件反倒写进了包里。
+             #   配套探针 H26。
+             "const cwdTrust = (id)", "const cwdTrustNote = (id)", "dispatch-untrusted:",
+             "dispatch-retarget:", "retargeted: true", "cwdTag: String(S.cwdTag || '')",
+             "cwdMade: Array.isArray(S.cwdMade)"):
     check("片段仍在: %s" % frag, frag in body)
 
 with io.open(CHK, "w", encoding="utf-8", newline="\n") as f:
