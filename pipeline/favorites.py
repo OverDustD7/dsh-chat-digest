@@ -33,7 +33,7 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 HERE = work_dir()
 WX = os.path.join(HERE, "output", "wx")
 TZ = dt.timezone(dt.timedelta(hours=8))
-OUT = os.path.join(HERE, "docs", "knowledge", "collections.md")
+OUT = os.path.join(HERE, "knowledge", "collections.md")
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
 TYPE = {1: "文字", 2: "图片", 3: "视频", 4: "音频", 5: "链接/文章", 6: "位置", 7: "文件", 8: "文件",

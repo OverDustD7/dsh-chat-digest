@@ -28,6 +28,8 @@ import contextlib
 import io
 import json
 import os
+from profile_paths import profile_root
+PROFILE = profile_root()
 import sys
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -128,7 +130,7 @@ def main(argv=None):
 
     # 6) 当日交付文件
     if a.date:
-        p = os.path.join(HERE, "output", "daily", a.date, "items.json")
+        p = os.path.join(PROFILE, "output", "daily", a.date, "items.json")
         if os.path.exists(p):
             try:
                 n = len(json.loads(io.open(p, encoding="utf-8").read()))

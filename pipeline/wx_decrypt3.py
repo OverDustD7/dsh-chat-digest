@@ -48,7 +48,7 @@ import importlib  # noqa: E402
 wd = importlib.import_module("wechat_decrypt_tool.wechat_decrypt")
 WeChatDatabaseDecryptor = wd.WeChatDatabaseDecryptor
 
-DBROOT = r"WX_ACCOUNT_DIR\db_storage"
+DBROOT = os.path.join(WX_ACCOUNT_DIR, "db_storage")
 OUT = os.path.join(ROOT, "output", "wx")
 
 DBS = [

@@ -18,6 +18,8 @@ import datetime as dt
 import io
 import json
 import os
+from profile_paths import profile_root
+PROFILE = profile_root()
 import re
 import sys
 from collections import defaultdict
@@ -90,7 +92,7 @@ def main():
     back = int(args[1]) if len(args) > 1 else 3
     d0 = dt.datetime.strptime(DATE, "%Y-%m-%d").replace(tzinfo=TZ)
 
-    today = keys_of(os.path.join(HERE, "output", "days", "%s.jsonl" % DATE))
+    today = keys_of(os.path.join(PROFILE, "output", "days", "%s.jsonl" % DATE))
     if not today:
         print("没有数据：%s" % DATE)
         return 1
@@ -101,7 +103,7 @@ def main():
     hist = defaultdict(list)                      # key -> [(date, hm, chat, snip)]
     for i in range(1, back + 1):
         d = (d0 - dt.timedelta(days=i)).strftime("%Y-%m-%d")
-        p = os.path.join(HERE, "output", "days", "%s.jsonl" % d)
+        p = os.path.join(PROFILE, "output", "days", "%s.jsonl" % d)
         if not os.path.exists(p):
             continue
         for hm, chat, who, k, snip in keys_of(p):
@@ -115,7 +117,7 @@ def main():
         rows.append((k, hits, hist[k]))
     rows.sort(key=lambda x: (-len(x[2]), len(x[1]), x[0]))
 
-    out = os.path.join(HERE, "output", "days", "%s_threads.md" % DATE)
+    out = os.path.join(PROFILE, "output", "days", "%s_threads.md" % DATE)
     with io.open(out, "w", encoding="utf-8", newline="\n") as f:
         f.write("# %s 主题跨天回溯（回看 %d 天；**同一个键今天与以前都出现过**）\n\n" % (DATE, back))
         f.write("> 只收可精确判定的三种键：文章URL键 / 卡片标题 / 域名。**不猜语义联系。**\n")

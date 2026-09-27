@@ -3,7 +3,7 @@
 
 **这个包里不许再写死任何群名 / 路径 / 账号** —— 一律从这里取。个人信息放在
 `<localDir>/pipeline.yaml`；`localDir` 的解析顺序与插件一致：
-`$DSH_CHAT_FEED_LOCAL` → 包旁的 `local/`。
+`$DSH_CHAT_FEED_LOCAL` → `$DSH_HOME/dsh-chat-digest`。
 
 别人用 `pipeline/pipeline.example.yaml` 复制一份填自己的值即可；缺键时
 `req()` 会打印「缺哪个键、去哪个文件填」并以退出码 2 结束。
@@ -22,31 +22,19 @@ _ENV = "DSH_CHAT_FEED_LOCAL"
 
 
 def local_dir():
-    """私人文件夹的解析顺序（与 lib/plugin.js 同一套）：
-    `$DSH_CHAT_FEED_LOCAL` → `<用户 AppData>/dsh-chat-digest`（缺省，插件自己的稳定目录）
-    → 包旁 `local/` → 包内 `pipeline/local/`。
-    为什么缺省不是包内：`dsh plugin add <包>@<版本>` 会整体重建包目录 ⇒ 放包里的私人文件每次更新都没。
-    """
+    """与宿主一致：显式目录优先，否则用 DSH_HOME 下的稳定私人目录。"""
     d = os.environ.get(_ENV) or ""
-    if d and os.path.isdir(d):
-        return d
-    here = os.path.dirname(os.path.abspath(__file__))
-    # A38：顺序＝插件目录下的 local/（可见入口，通常是运行时联接）→ 包外真身 → 包旁/包内 local/
-    pkg = os.path.dirname(here)
-    appdata = os.environ.get("LOCALAPPDATA") or os.path.join(
-        os.environ.get("USERPROFILE") or "C:", "AppData", "Local")
-    home = os.environ.get("DSH_HOME") or os.path.join(
-        os.environ.get("USERPROFILE") or "C:", ".dsh")
-    cands = [os.path.join(pkg, "local")]
-    if home:
-        cands.append(os.path.join(home, "dsh-chat-digest"))   # A40：<DSH_HOME>/dsh-chat-digest
-    if appdata:
-        cands.append(os.path.join(appdata, "dsh-chat-digest"))
-    cands.append(os.path.join(here, "local"))
-    for cand in cands:
-        if os.path.isdir(cand):
-            return cand
-    return d or cands[0]
+    home = os.environ.get("DSH_HOME") or (
+        os.path.join(os.environ["USERPROFILE"], ".dsh")
+        if os.environ.get("USERPROFILE") else "")
+    appdata = os.environ.get("LOCALAPPDATA") or (
+        os.path.join(os.environ["USERPROFILE"], "AppData", "Local")
+        if os.environ.get("USERPROFILE") else "")
+    selected = d or (os.path.join(home, "dsh-chat-digest") if home else "") or (
+        os.path.join(appdata, "dsh-chat-digest") if appdata else "")
+    if not selected or not os.path.isabs(selected):
+        raise SystemExit("[pconf] 私人 profile 需要绝对路径：请设置 DSH_CHAT_FEED_LOCAL 或 DSH_HOME")
+    return selected
 
 
 def profile():
@@ -56,7 +44,7 @@ def profile():
     profile 目录里的一切都是**某个人的**，重装插件也不该丢 —— 所以它能用 config.localDir /
     `$DSH_CHAT_FEED_LOCAL` 指到包外面（宿主挂载时会把解析到的值导出到这个环境变量）。
     """
-    return local_dir()
+    return os.path.realpath(local_dir())
 
 
 def p(*parts):
@@ -147,9 +135,8 @@ def pkg_dir():
 
 
 def agent_root():
-    """主 agent 的工作区＝<插件目录>/agent（说明书、工具箱、产物与个人数据都在这一棵树里）。
-    插件目录其余部分只读；插件目录之外不写任何东西。"""
-    return os.path.join(pkg_dir(), 'agent')
+    """数据工作区＝私人 profile 的物理路径；写入不经包内 junction。"""
+    return profile()
 
 
 def scripts_dir():

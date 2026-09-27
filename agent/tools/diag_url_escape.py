@@ -3,6 +3,8 @@
 import io
 import json
 import os
+from profile_paths import profile_root
+PROFILE = profile_root()
 import re
 import sys
 
@@ -11,11 +13,11 @@ HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 URL_RE = re.compile(r"https?://[^\s\"'<>\\）)】]+")
 SKIP = ("tianquan.gtimg.cn", "zb.vip.qq.com")
 
-p = os.path.join(HERE, "output", "window", "all_urls.jsonl")
+p = os.path.join(PROFILE, "output", "window", "all_urls.jsonl")
 urls = {json.loads(l)["url"] for l in io.open(p, encoding="utf-8") if l.strip()}
 pref = sorted(u for u in urls if any(v != u and v.startswith(u) for v in urls))
 
-dayp = os.path.join(HERE, "output", "days", "2026-09-12.jsonl")
+dayp = os.path.join(PROFILE, "output", "days", "2026-09-12.jsonl")
 esc_hits = 0
 field_hits = {"text": 0, "raw": 0}
 for line in io.open(dayp, encoding="utf-8", errors="replace"):

@@ -8,11 +8,13 @@
 """
 import io
 import os
+from profile_paths import profile_root
+PROFILE = profile_root()
 import sys
 import traceback
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-INSIDE = os.path.join(ROOT, "output", "_probe_after_migration.txt")
+INSIDE = os.path.join(PROFILE, "output", "_probe_after_migration.txt")
 OUTSIDE = os.path.join(os.path.dirname(ROOT), '_probe_should_fail.txt')   # 插件目录之外（＝它的上一层），A35 起不再写死某台机器的路径
 
 try:

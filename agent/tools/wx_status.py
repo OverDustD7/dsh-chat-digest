@@ -25,6 +25,8 @@ import datetime
 import io
 import json
 import os
+from profile_paths import profile_root
+PROFILE = profile_root()
 import subprocess
 import sys
 
@@ -34,7 +36,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ROOT_PIPE = os.path.join(os.path.dirname(ROOT), "pipeline")   # A35：取数脚本在 <插件目录>/pipeline（原来指 <agent 根>/scripts，A34 后那里不存在）
 sys.path.insert(0, os.path.join(ROOT_PIPE))
 CST = datetime.timezone(datetime.timedelta(hours=8))
-OUT_J = os.path.join(ROOT, "output", "logs", "_wx_status.json")
+OUT_J = os.path.join(PROFILE, "output", "logs", "_wx_status.json")
 
 
 def procs():
@@ -114,7 +116,7 @@ def main():
 
     info["newestAttach"] = newest_attach()
     today = datetime.datetime.now(CST).strftime("%Y-%m-%d")
-    jl = os.path.join(ROOT, "output", "days", "%s.jsonl" % today)
+    jl = os.path.join(PROFILE, "output", "days", "%s.jsonl" % today)
     info["today"] = today
     info["todayJsonl"] = {"exists": os.path.exists(jl), "path": jl}
 

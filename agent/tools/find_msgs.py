@@ -8,6 +8,8 @@ import datetime as dt
 import io
 import json
 import os
+from profile_paths import profile_root
+PROFILE = profile_root()
 import re
 import sys
 
@@ -22,7 +24,7 @@ width = int(sys.argv[4]) if len(sys.argv) > 4 else 500
 
 shown = 0
 for date in dates:
-    p = os.path.join(HERE, "output", "days", "%s.jsonl" % date.strip())
+    p = os.path.join(PROFILE, "output", "days", "%s.jsonl" % date.strip())
     if not os.path.exists(p):
         print("（缺 %s）" % date)
         continue

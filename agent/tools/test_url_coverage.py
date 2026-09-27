@@ -10,6 +10,8 @@
 import io
 import json
 import os
+from profile_paths import profile_root
+PROFILE = profile_root()
 import shutil
 import sys
 
@@ -19,7 +21,7 @@ HERE_PIPE = os.path.join(os.path.dirname(HERE), "pipeline")   # A35：取数脚�
 sys.path.insert(0, os.path.join(HERE_PIPE))
 import daily_prep  # noqa: E402
 
-META = os.path.join(HERE, "output", "window", "all_urls_meta.json")
+META = os.path.join(PROFILE, "output", "window", "all_urls_meta.json")
 BAK = META + ".testbak"
 DATE = "2026-09-12"
 

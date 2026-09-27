@@ -20,13 +20,15 @@ import glob
 import io
 import json
 import os
+from profile_paths import profile_root
+PROFILE = profile_root()
 import re
 import sys
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DAYS = os.path.join(HERE, "output", "days")
-LOGS = os.path.join(HERE, "output", "logs")
+DAYS = os.path.join(PROFILE, "output", "days")
+LOGS = os.path.join(PROFILE, "output", "logs")
 ROW = re.compile(r"^- \d\d:\d\d\s")
 
 
@@ -131,7 +133,7 @@ def main():
     for c in cands:
         for an in c.get("_anchors") or []:
             tot_a += 1
-            p = os.path.join(HERE, an["file"])
+            p = os.path.join(PROFILE, an["file"])
             if not os.path.exists(p):
                 missing.append((an, c))
                 continue
@@ -171,7 +173,7 @@ def main():
 
     say("")
     say("== 6 与基线对账（**n-gram 只是线索，不是判据**）==")
-    base = os.path.join(HERE, "output", "daily", a.date, "items.json")
+    base = os.path.join(PROFILE, "output", "daily", a.date, "items.json")
     if a.baseline_skip or not os.path.exists(base):
         say("   跳过（%s）" % ("--baseline-skip" if a.baseline_skip else "无基线 items.json"))
     else:

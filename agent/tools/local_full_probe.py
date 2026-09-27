@@ -14,6 +14,8 @@ import glob
 import io
 import json
 import os
+from profile_paths import profile_root
+PROFILE = profile_root()
 import re
 import sys
 import time
@@ -22,7 +24,7 @@ import urllib.request
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 URL = "http://127.0.0.1:11434/api/chat"
-OUT = os.path.join(HERE, "output", "logs")
+OUT = os.path.join(PROFILE, "output", "logs")
 
 PROMPT = (
     "你是「聊天情报」的提炼助手。下面是一段微信群/QQ 消息（每行格式：- HH:MM [群] 人: 内容）。\n"
@@ -77,7 +79,7 @@ def main():
         cands = json.load(io.open(cand_file, encoding="utf-8"))
         print("（--compare-only）直接读回 %d 条候选：%s" % (len(cands), os.path.relpath(cand_file, HERE)))
         return compare(a.date, cands)
-    days = os.path.join(HERE, "output", "days")
+    days = os.path.join(PROFILE, "output", "days")
     files = sorted(p for p in glob.glob(os.path.join(days, "%s_slice*" % a.date))
                    if not p.endswith("_slices.md"))
     rows, per = [], []
@@ -124,7 +126,7 @@ def main():
           % (len(cands), t_all, t_all / max(1, len(chunks)), tok_out))
     print("落盘：%s" % os.path.relpath(out, HERE))
 
-    base = os.path.join(HERE, "output", "daily", a.date, "items.json")
+    base = os.path.join(PROFILE, "output", "daily", a.date, "items.json")
     if not os.path.exists(base):
         print("\n（无 DSH 基线 %s，跳过对账）" % os.path.relpath(base, HERE))
         return 0
@@ -134,7 +136,7 @@ def main():
 def compare(date, cands):
     """与 DSH 基线双向对账：① 基线覆盖率（本地有没有漏掉基线报过的）② 候选里对不上基线的（新发现 or 编造）。
     注意 `max(..., key=lambda t: t[0])`：分数相同时不能拿 dict 去比大小（2026-09-17 踩过 TypeError）。"""
-    base = os.path.join(HERE, "output", "daily", date, "items.json")
+    base = os.path.join(PROFILE, "output", "daily", date, "items.json")
     B = json.load(io.open(base, encoding="utf-8"))
     hit, miss = [], []
     for b in B:

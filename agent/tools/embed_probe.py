@@ -12,6 +12,8 @@ import io
 import json
 import math
 import os
+from profile_paths import profile_root
+PROFILE = profile_root()
 import random
 import re
 import sys
@@ -45,7 +47,7 @@ def cos(a, b):
 
 
 def load_units(date, n, seed=20260914):
-    p = os.path.join(HERE, "output", "days", "%s_units.md" % date)
+    p = os.path.join(PROFILE, "output", "days", "%s_units.md" % date)
     if not os.path.exists(p):
         return None
     rows = []
@@ -62,7 +64,7 @@ def load_units(date, n, seed=20260914):
 
 
 def load_items():
-    p = os.path.join(HERE, "docs", "信息列表.md")
+    p = os.path.join(PROFILE, "docs", "信息列表.md")
     if not os.path.exists(p):
         return []
     out = []
@@ -115,7 +117,7 @@ def main():
         L.append("- **%d 条**：" % len(c["m"]))
         for m in c["m"][:4]:
             L.append("  - %s" % m[:100])
-    io.open(os.path.join(HERE, "output", "window", "_embed_probe.md"), "w",
+    io.open(os.path.join(PROFILE, "output", "window", "_embed_probe.md"), "w",
             encoding="utf-8", newline="\n").write("\n".join(L) + "\n")
     print("OK -> output/window/_embed_probe.md（%d 簇，≥3 成员 %d 簇）" % (len(clusters), len(big)))
     return 0

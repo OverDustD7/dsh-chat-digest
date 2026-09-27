@@ -13,6 +13,8 @@ import datetime as dt
 import io
 import json
 import os
+from profile_paths import profile_root
+PROFILE = profile_root()
 import sys
 
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
@@ -40,7 +42,7 @@ def main(argv=None):
     ap.add_argument('--dry-run', action='store_true')
     a = ap.parse_args(argv)
 
-    path = a.text_file if os.path.isabs(a.text_file) else os.path.join(HERE, a.text_file)
+    path = a.text_file if os.path.isabs(a.text_file) else os.path.join(PROFILE, a.text_file)
     new = normalize_text(io.open(path, encoding='utf-8').read())
     if not new:
         raise SystemExit('新正文为空：%s' % path)
@@ -64,7 +66,7 @@ def main(argv=None):
         raise SystemExit('回写失败，面板未改')
 
     now = dt.datetime.now(TZ)
-    arch = os.path.join(HERE, 'docs', 'archive', '%s_edits.md' % now.strftime('%Y-%m-%d'))
+    arch = os.path.join(PROFILE, 'archive', '%s_edits.md' % now.strftime('%Y-%m-%d'))
     with io.open(arch, 'a', encoding='utf-8', newline='\n') as fh:
         fh.write('\n## %s ｜ %s 整条改写 —— %s\n\n**改前**\n\n```\n%s\n```\n\n**改后**\n\n```\n%s\n```\n'
                  % (now.strftime('%Y-%m-%d %H:%M'), a.item_id, a.reason, old, new))

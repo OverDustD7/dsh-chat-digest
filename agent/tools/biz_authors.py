@@ -30,6 +30,8 @@ import glob
 import io
 import json
 import os
+from profile_paths import profile_root
+PROFILE = profile_root()
 import re
 import subprocess
 import sys
@@ -64,7 +66,7 @@ def parse_ymd(s):
 def articles_md_map():
     """本机 `output\\days\\*_articles.md`：date -> 路径（文件名不合法的忽略）。"""
     m = {}
-    for p in glob.glob(os.path.join(HERE, "output", "days", "*_articles.md")):
+    for p in glob.glob(os.path.join(PROFILE, "output", "days", "*_articles.md")):
         mt = ART_MD_RE.match(os.path.basename(p))
         if mt:
             m[datetime.date(int(mt.group(1)), int(mt.group(2)), int(mt.group(3)))] = p
@@ -142,7 +144,7 @@ def rows_from_articles_md(days, amap):
 
 def followed_accounts():
     s = set()
-    p = os.path.join(HERE, "output", "window", "biz_articles.jsonl")
+    p = os.path.join(PROFILE, "output", "window", "biz_articles.jsonl")
     if os.path.exists(p):
         for j in load_jsonl(p):
             if j.get("account"):
@@ -157,7 +159,7 @@ def names_from_cache():
     `- 发布：`，于是把号名解成 "- 发布："。这里用 `[^\\n]+` 严格限定在同一行。
     """
     m = {}
-    for p in glob.glob(os.path.join(HERE, "output", "window", "articles", "*.md")):
+    for p in glob.glob(os.path.join(PROFILE, "output", "window", "articles", "*.md")):
         head = io.open(p, encoding="utf-8", errors="replace").read()[:1500]
         acc = re.search(r"公众号[ \t]*[：:][ \t]*([^\n]+)", head)
         u = URL_RE.search(head)
@@ -170,7 +172,7 @@ def names_from_cache():
 
 def fetch_unknown(unknown, limit):
     """每个未知号抓一篇解号名（缓存；已存在就跳过）。"""
-    adir = os.path.join(HERE, "output", "window", "articles")
+    adir = os.path.join(PROFILE, "output", "window", "articles")
     os.makedirs(adir, exist_ok=True)
     got = {}
     for biz, info in sorted(unknown.items(), key=lambda kv: -kv[1]["count"])[:limit]:
@@ -196,7 +198,7 @@ def fetch_unknown(unknown, limit):
 def main():
     ap = argparse.ArgumentParser(
         description="挖被转发的公众号作者（默认最近 N 天，锚点=本机 output\\days 里最新的 _articles.md）")
-    ap.add_argument("--out", default=os.path.join(HERE, "output", "window", "biz_authors.md"))
+    ap.add_argument("--out", default=os.path.join(PROFILE, "output", "window", "biz_authors.md"))
     ap.add_argument("--date", help="只扫这一天（YYYY-MM-DD）")
     ap.add_argument("--from", dest="date_from", help="区间起（YYYY-MM-DD，含）")
     ap.add_argument("--to", dest="date_to", help="区间止（YYYY-MM-DD，含）")
@@ -258,7 +260,7 @@ def main():
     # 本地推送（他已关注号）也补一份：**只用来解出真名**（修 #27：contact 表的备注名 ≠ 真号名，
     # 「艾生活｜秋季学期选课安排」实际号是「艾生权」），不进"未关注候选池"——这些号他本来就关注了。
     push = {}
-    bp = os.path.join(HERE, "output", "window", "biz_articles.jsonl")
+    bp = os.path.join(PROFILE, "output", "window", "biz_articles.jsonl")
     if os.path.exists(bp):
         for j in load_jsonl(bp):
             m = BIZ_RE.search(j.get("url") or "")

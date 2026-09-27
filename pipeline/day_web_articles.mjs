@@ -11,14 +11,14 @@
 //   --days   自证区间的天数（默认 14）
 // 产出:  output\window\web_articles_<date>.md
 //        —— 当日条目 + **近 N 天每日条数**（沿用既有纪律："0 篇"必须有据，不能只说"没抓到"）
-import { cfgList } from "./pconf.mjs";
+import { cfgList, configDir } from "./pconf.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const PIPE = path.dirname(fileURLToPath(import.meta.url));                       // <插件目录>/pipeline
-const HERE = path.join(path.dirname(PIPE), "agent");                              // 工作区＝<插件目录>/agent（A35）
+const HERE = configDir;  // 私人 profile 的物理路径；产物不经包内联接
 const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 

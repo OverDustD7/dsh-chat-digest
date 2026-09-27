@@ -41,9 +41,11 @@ import json
 import os
 import re
 import sys
+from profile_paths import profile_root
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))       # agent 根（＝包内 agent/ 或 <个人目录>）
+PROFILE = profile_root()
 
 # 与 check_knowledge_style.py 的 BAD 同口径：查"新块标题"，不查行内叙述
 BAD = re.compile(r"^(#{2,4})\s*.*(补录|二次补录|(\d{2}-\d{2}|20\d{2}-\d{2}-\d{2}).{0,12}(补|新增|并入)\s*[（(])")
@@ -118,7 +120,12 @@ def main(argv=None):
             print("%s  拒：只允许写 docs/ 下的 .md（收到 %s）" % (tag, rel))
             bad += 1
             continue
-        path = os.path.join(HERE, rel)
+        path = os.path.realpath(os.path.join(PROFILE, rel))
+        docs_root = os.path.realpath(os.path.join(PROFILE, "docs"))
+        if os.path.commonpath((docs_root, path)) != docs_root:
+            print("%s  拒：路径越界 %s" % (tag, rel))
+            bad += 1
+            continue
         if not os.path.exists(path):
             print("%s  拒：文件不存在 %s" % (tag, rel))
             bad += 1

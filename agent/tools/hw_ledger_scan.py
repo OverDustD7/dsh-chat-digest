@@ -12,6 +12,8 @@ r"""hw_ledger_scan.py —— 动作项机械扫描（硬性纪律 12 指定的 `
 """
 import io
 import os
+from profile_paths import profile_root
+PROFILE = profile_root()
 import re
 import sys
 
@@ -35,9 +37,9 @@ def day_files(date):
     自检却因为"扫了 1 个文件"而看着正常。改成 glob `<date>_slice*`，并存一份文件清单进产出，便于自证。
     """
     import glob
-    hits = [os.path.join(HERE, "output", "days", p % date) for p in DEFAULT]
+    hits = [os.path.join(PROFILE, "output", "days", p % date) for p in DEFAULT]
     hits = [p for p in hits if os.path.exists(p)]
-    globbed = sorted(glob.glob(os.path.join(HERE, "output", "days", "%s_slice*" % date)))
+    globbed = sorted(glob.glob(os.path.join(PROFILE, "output", "days", "%s_slice*" % date)))
     for g in globbed:
         if g not in hits and not g.endswith("_slices.md"):
             hits.append(g)
@@ -59,9 +61,9 @@ def scan(path):
 
 
 def main(argv):
-    d = os.path.join(HERE, "output", "days")
+    d = os.path.join(PROFILE, "output", "days")
     if argv and argv[0] == "--file":
-        files = [os.path.join(HERE, argv[1]) if not os.path.isabs(argv[1]) else argv[1]]
+        files = [os.path.join(PROFILE, argv[1]) if not os.path.isabs(argv[1]) else argv[1]]
         tag = os.path.basename(argv[1]).replace(".md", "")
     else:
         date = argv[0] if argv else "2026-09-14"

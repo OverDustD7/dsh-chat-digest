@@ -34,6 +34,8 @@ import base64
 import io
 import json
 import os
+from profile_paths import profile_root
+PROFILE = profile_root()
 import re
 import sys
 import time
@@ -95,7 +97,7 @@ def normalize(path, max_side=1568, quality=85):
 
 
 def resolve(date):
-    p = os.path.join(HERE, "output", "days", "%s_images.json" % date)
+    p = os.path.join(PROFILE, "output", "days", "%s_images.json" % date)
     if not os.path.exists(p):
         return None
     j = json.loads(io.open(p, encoding="utf-8", errors="replace").read())
@@ -104,7 +106,7 @@ def resolve(date):
         if not isinstance(it, dict):
             continue
         for rel in (it.get("path") or []):
-            f = os.path.join(HERE, "output", "window", "images", rel.replace("/", os.sep))
+            f = os.path.join(PROFILE, "output", "window", "images", rel.replace("/", os.sep))
             if os.path.exists(f) and f not in seen:
                 seen.add(f)
                 out.append({"file": f, "chat": it.get("chat_name") or "", "ts": it.get("ts") or 0,
@@ -318,10 +320,10 @@ def main():
           % (n_detail, len(d_targets), t_d, t_d / max(1, len(d_targets))),
           "| 模型 | %s（本机 Ollama，零 API 花费） |" % MODEL,
           "| **带语境**（回语境是归属判据） | %d/%d 张；缺 %d 张 |" % (n_ctx, len(items), len(items) - n_ctx)]
-    out = os.path.join(HERE, "output", "days", "%s_vision.md" % date)
+    out = os.path.join(PROFILE, "output", "days", "%s_vision.md" % date)
     io.open(out, "w", encoding="utf-8", newline="\n").write("\n".join(L) + "\n")
     # 机器可读版：阶段 5 直接吃这个，不必解析 md、也不必再看图
-    jpath = os.path.join(HERE, "output", "days", "%s_vision_detail.json" % date)
+    jpath = os.path.join(PROFILE, "output", "days", "%s_vision_detail.json" % date)
     pack = {"date": date, "model": MODEL,
             "stats": {"images": len(items), "review": len(review), "noise": len(noise), "fail": len(fail),
                       "detail_ok": n_detail, "detail_tried": len(d_targets),

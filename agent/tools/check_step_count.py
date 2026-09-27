@@ -22,6 +22,8 @@
 """
 import glob
 import os
+from profile_paths import profile_root
+PROFILE = profile_root()
 import re
 import sys
 
@@ -75,7 +77,7 @@ def count_run_calls():
 
 
 def count_report_rows():
-    reports = sorted(glob.glob(os.path.join(ROOT, "output", "daily", "*", "prep_report.md")))
+    reports = sorted(glob.glob(os.path.join(PROFILE, "output", "daily", "*", "prep_report.md")))
     if not reports:
         return None, None
     newest = reports[-1]

@@ -14,6 +14,8 @@ import io
 import json
 import math
 import os
+from profile_paths import profile_root
+PROFILE = profile_root()
 import re
 import sys
 import urllib.request
@@ -48,7 +50,7 @@ def cos(a, b):
 def main():
     date = sys.argv[1] if len(sys.argv) > 1 else "2026-09-13"
     TH = float(sys.argv[2]) if len(sys.argv) > 2 else 0.93
-    p = os.path.join(HERE, "output", "days", "%s_units.md" % date)
+    p = os.path.join(PROFILE, "output", "days", "%s_units.md" % date)
     units = []
     for l in io.open(p, encoding="utf-8", errors="replace"):
         l = l.rstrip("\n")
@@ -96,7 +98,7 @@ def main():
         L.append("- **%d 条**（建议留最早 `%s`）" % (len(g), units[g[0]][2][:80]))
         for i in g:
             L.append("  - %s" % units[i][2][:150])
-    io.open(os.path.join(HERE, "output", "days", "%s_near_dup.md" % date), "w",
+    io.open(os.path.join(PROFILE, "output", "days", "%s_near_dup.md" % date), "w",
             encoding="utf-8", newline="\n").write("\n".join(L) + "\n")
     print("OK groups=%d pairs=%d saveable=%d -> output/days/%s_near_dup.md"
           % (len(dup), pairs, sum(len(g) - 1 for g in dup), date))

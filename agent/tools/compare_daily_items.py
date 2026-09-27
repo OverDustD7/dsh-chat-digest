@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 r"""compare_daily_items.py —— 双轨对比：ZCode 闲时任务的产出 vs DSH 主 agent 的产出。
 
 用法:
@@ -16,6 +16,8 @@ import argparse
 import io
 import json
 import os
+from profile_paths import profile_root
+PROFILE = profile_root()
 import re
 import sys
 
@@ -74,7 +76,7 @@ def main(argv):
     date = a.date
     pa = a.a or os.path.join("output", "zcode", date, "items.json")
     pb = a.b or os.path.join("output", "daily", date, "items.json")
-    A, B = load(os.path.join(HERE, pa)), load(os.path.join(HERE, pb))
+    A, B = load(os.path.join(PROFILE, pa)), load(os.path.join(PROFILE, pb))
     if A is None:
         print("缺 A（ZCode 侧）：%s —— 闲时任务还没产出，或路径不对" % pa)
         return 2
@@ -156,7 +158,7 @@ def main(argv):
             "3. **看执行形态**：A 的 `SUMMARY.md` 里写了用没用前台子智能体、有没有降级成串行 —— 降级了就别怪它漏。",
             "4. **看动作项台账**：A 的 `ACTION-LEDGER.md` 与 `%s_action_scan.md` 对账，命中是否**每条都有处置**。" % date,
             "5. 结论只有两种：**可以替换** / **继续留在 DSH**；两者都要写进 `docs\\EVOLUTION.md`。", ""]
-    outdir = os.path.join(HERE, "output", "zcode", date)
+    outdir = os.path.join(PROFILE, "output", "zcode", date)
     if not os.path.isdir(outdir):
         os.makedirs(outdir)
     p = os.path.join(outdir, "COMPARE.md")

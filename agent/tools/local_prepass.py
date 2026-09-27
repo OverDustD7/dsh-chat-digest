@@ -22,6 +22,8 @@ import glob
 import io
 import json
 import os
+from profile_paths import profile_root
+PROFILE = profile_root()
 import re
 import sys
 import time
@@ -29,8 +31,8 @@ import urllib.request
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DAYS = os.path.join(HERE, "output", "days")
-LOGS = os.path.join(HERE, "output", "logs")
+DAYS = os.path.join(PROFILE, "output", "days")
+LOGS = os.path.join(PROFILE, "output", "logs")
 URL = "http://127.0.0.1:11434/api/chat"
 
 ROW = re.compile(r"^- (\d\d:\d\d)\s+(.*)$")          # 只认 `- HH:MM …`，挡掉「各会话条数」这类列表
@@ -72,7 +74,7 @@ def load_rows(a):
     if a.only_include:
         files = []
     for p in a.include or []:
-        p = p if os.path.isabs(p) else os.path.join(HERE, p)
+        p = p if os.path.isabs(p) else os.path.join(PROFILE, p)
         if os.path.exists(p):
             files.append(p)
         else:

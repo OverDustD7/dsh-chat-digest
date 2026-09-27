@@ -13,6 +13,8 @@ import datetime as dt
 import io
 import json
 import os
+from profile_paths import profile_root
+PROFILE = profile_root()
 import sys
 
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
@@ -27,7 +29,7 @@ try:
     from pconf import p as _pp
     OUT = _pp('docs', '信息列表.md')
 except Exception:
-    OUT = os.path.join(HERE, 'docs', '信息列表.md')
+    OUT = os.path.join(PROFILE, 'docs', '信息列表.md')
 try:
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
 except Exception:

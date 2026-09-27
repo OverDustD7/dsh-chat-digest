@@ -2,29 +2,24 @@
 //
 // 取值优先级：<localDir>/pipeline.json[key] > <localDir>/pipeline.yaml 的扁平键 > default。
 // 复杂结构（对象数组，如 web_sources）请放 pipeline.json。
-// `localDir`：$DSH_CHAT_FEED_LOCAL → 包旁的 local/ → 包内 local/。
+// `localDir`：$DSH_CHAT_FEED_LOCAL → $DSH_HOME/dsh-chat-digest。
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-
-const HERE = path.dirname(fileURLToPath(import.meta.url));
 
 function localDir() {
   const env = process.env.DSH_CHAT_FEED_LOCAL || '';
-  if (env && fs.existsSync(env)) return env;
+  if (env) {
+    if (!path.isAbsolute(env)) throw new Error('DSH_CHAT_FEED_LOCAL 必须是绝对路径');
+    return fs.existsSync(env) ? fs.realpathSync(env) : env;
+  }
   const appdata = process.env.LOCALAPPDATA
     || (process.env.USERPROFILE ? path.join(process.env.USERPROFILE, 'AppData', 'Local') : '');
-  const cands = [];
-  cands.push(path.join(HERE, '..', 'local'));                       // A38：插件目录下的 local/（可见入口）
   const home = process.env.DSH_HOME || (process.env.USERPROFILE ? path.join(process.env.USERPROFILE, '.dsh') : '');
-  if (home) cands.push(path.join(home, 'dsh-chat-digest'));         // A40：真身
-  if (appdata) cands.push(path.join(appdata, 'dsh-chat-digest'));   // 旧位置兜底
-  cands.push(path.join(HERE, 'local'));
-  for (const c of cands) {
-    if (fs.existsSync(c)) return c;
-  }
-  return env || cands[0];
+  const selected = (home && path.join(home, 'dsh-chat-digest'))
+    || (appdata && path.join(appdata, 'dsh-chat-digest'));
+  if (!selected || !path.isAbsolute(selected)) throw new Error('私人 profile 需要绝对路径：请设置 DSH_HOME');
+  return fs.existsSync(selected) ? fs.realpathSync(selected) : selected;
 }
 
 const DIR = localDir();

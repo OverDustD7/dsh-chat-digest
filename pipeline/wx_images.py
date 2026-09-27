@@ -67,11 +67,9 @@ LAST_KEY_REASON = ""
 #: 最近一次 resolve_key 成功时用的是哪一级候选（cached / kvcomm / historical）。
 LAST_KEY_SOURCE = ""
 
-#: 本机历史上**验证通过**过的 code（不随登录态变化，但一律要再验一次才采用）。
-#: ***REMOVED***：2026-09-11 首次打通图片链路时验证（`docs\README.md` 第 90/107 行），
-#: 2026-09-15 复验仍然能解开当天最新与 07 月最早的 `_t.dat`。
-#: 为什么需要这一级：微信未登录时 kvcomm 里只剩 `key_0_<版本号>_…` 这种**占位**
-#: （code 段是 0，`4065598732` 其实是 idkey_clientversion），此时纯靠扫 kvcomm
+#: 历史上验证过的 code 仍要用真实模板复验，且只从私人配置读取。
+#: 微信未登录时 kvcomm 里可能只剩 `key_0_<版本号>_…` 这种**占位**
+#: （code 段是 0，后续字段是 idkey_clientversion），此时纯靠扫 kvcomm
 #: 会得出"解不出密钥"的假结论，而图片线其实完全能跑。
 # A55：历史 code 是**某个账号**的数据，不随包发布 —— 放 pipeline.yaml 的 `wx_hist_codes`
 HISTORICAL_CODES = tuple(int(x) for x in str(C.get("wx_hist_codes") or "")
@@ -93,12 +91,11 @@ def wx_login_state(kvcomm=None):
     """微信在线/可用状态（**2026-09-15 晚修正过一次，别再用单信号**）。
 
     事实（同一天实测到的两段对照，非常关键）：
-      · 19:32 未登录：kvcomm 只有 `key_0_4065598732_1_<epoch>_…statistic`
-        —— **code 段是 0（占位）**，`4065598732` 是 `idkey_clientversion`（客户端版本号，不是密钥）。
-      · 20:02 已登录：出现 `***REMOVED***_4065598732_1_<epoch>_…`、
-        `key_***REMOVED***_4065598732_1_…_ready.statistic` —— **code 段是真实 code**，
-        同时附件库活动从 15:44 恢复到 19:52。
-      · **但 `config.ini` 的 `last_uin=` 在"已登录"时依然是空的**（20:02 那次读到的就是空）。
+      · 未登录：kvcomm 可能只有 `key_0_<version>_1_<epoch>_…statistic`，
+        **code 段是 0（占位）**，后续字段是客户端版本号，不是密钥。
+      · 已登录：可能出现 `key_<code>_<version>_1_…_ready.statistic`，
+        **code 段是真实 code**。
+      · **但 `config.ini` 的 `last_uin=` 在已登录时仍可能为空**。
       ⇒ **`last_uin` 不是登录判据**。第一版我只看它，是从一次观察下的结论，已被上面这个反例证伪。
 
     现在的判据（多信号，且以"图片线能不能跑"为准）：
@@ -137,9 +134,8 @@ def wx_login_state(kvcomm=None):
 def enumerate_codes(kvcomm):
     """候选 code 列表 —— **只产候选，能不能用交给 resolve_key 对真实 *_t.dat 验证**。
 
-    2026-09-15 为什么改：微信改了 kvcomm 命名。旧格式 `key_***REMOVED***_…statistic`
-    （正则吃第一段数字就对），新格式 `key_0_4065598732_1_1789471930_24218_3600_input.statistic`
-    —— 第一段是 `0`（未登录时的 code 占位），`4065598732` 是 `idkey_clientversion`。
+    微信改过 kvcomm 命名：旧格式 `key_<code>_…statistic`，新格式可能以 `key_0_<version>_` 开头。
+    第一段是 `0` 时代表未登录占位，后续字段是 `idkey_clientversion`。
     所以不再只吃第一段：把 `key*` / `*.statistic` / `*.monitor` 文件里**每个 >=6 位的数字段**都当候选，
     由 resolve_key 逐个试解验证（候选里有版本号也无所谓，验不过就被丢掉）。
     `0` 直接排除（占位，永远不是真 code）。
