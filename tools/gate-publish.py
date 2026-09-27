@@ -24,7 +24,9 @@ import urllib.parse
 
 # 本文件住在 <仓库>/tools/ 下：仓库位置由自身位置算，不再写死
 R = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PROFILE = os.path.join(os.environ.get('USERPROFILE', ''), '.dsh', 'profiles', 'web')
+DSH_HOME = os.environ.get('DSH_HOME') or os.path.join(os.path.expanduser('~'), '.dsh')
+HOST_PROFILE = os.path.join(DSH_HOME, 'profiles', 'web')
+PRIVATE = os.environ.get('DSH_CHAT_FEED_LOCAL') or os.path.join(DSH_HOME, 'dsh-chat-digest')
 TMP = os.path.join(os.environ.get('TEMP', '.'), 'cf-gate2')
 DO_PUBLISH = '--publish' in sys.argv
 
@@ -57,10 +59,10 @@ FORBID_DIRS = ('local/', 'test/', 'tools/', 'docs/', 'archive/', 'node_modules/'
 FORBID_ANY = ('__pycache__', '.pyc', '.pyo', '.db', '.sqlite', '.log', '.env')
 
 # ── 补充标记（我硬编码的，作为自动标记表的并集）──────────────────────────────
-# 私密标记**只从 local/personal-tokens.txt 读**（local/ 已被 .gitignore 忽略）——
+# 私密标记**只从私人 profile 的 personal-tokens.txt 读**——
 #   门禁脚本自身不许含任何私人值，否则它自己就成了泄露源。
 EXTRA = []
-_tok = os.path.join(R, 'local', 'personal-tokens.txt')
+_tok = os.path.join(PRIVATE, 'personal-tokens.txt')
 if os.path.isfile(_tok):
     EXTRA = [l.strip() for l in io.open(_tok, encoding='utf-8')
              if l.strip() and not l.startswith('#')]
@@ -77,10 +79,23 @@ GENERIC_SEG = {'users', 'appdata', 'documents', 'local', 'roaming', 'temp', 'pro
 #   output / cache / models / Tencent / kvcomm / Project / https: = 代码里的通用路径段与协议。
 GENERIC_OK = {'paratera', 'deepseek', 'overdustd7', 'dsh-chat-digest',
               'id: dsh-chat-digest', 'output', 'cache', 'models', 'tencent', 'kvcomm',
-              'project', 'https:', 'http:', 'dsh', 'wxid', 'xwechat', '***REMOVED***-preset'}
+              'project', 'https:', 'http:', 'dsh', 'wxid', 'xwechat'}
 
 
 _CJK_RE = re.compile(r'[\u4e00-\u9fff]')
+
+
+def feed_value(value):
+    v = str(value).strip().strip("'\"").strip().rstrip(',').strip().strip("'\"").strip()
+    if not v or v in ('True', 'False', 'None', 'null'):
+        return
+    if len(v) >= 5 or _CJK_RE.search(v):
+        T1.add(v)                    # 完整值 = 高危（中文名 2–3 字也算）
+    if '\\' in v or '/' in v:
+        for seg in v.replace('/', '\\').split('\\'):
+            seg = seg.strip()
+            if (len(seg) >= 5 or _CJK_RE.search(seg)) and seg.lower() not in GENERIC_SEG:
+                T2.add(seg)
 
 
 def feed_config(path):
@@ -89,33 +104,37 @@ def feed_config(path):
     for line in io.open(path, encoding='utf-8', errors='replace').read().split('\n'):
         raw = line.split('#')[0].rstrip()
         s = raw.strip()
-        if not s:
-            continue
-        if s.startswith('- '):          # 列表项（群名等）
-            v = s[2:].strip()
+        if s.startswith('- '):
+            feed_value(s[2:])
         elif ':' in s:
-            v = s.split(':', 1)[1].strip()
-        else:
-            continue
-        v = v.strip().strip("'\"").strip().rstrip(',').strip().strip("'\"").strip()
-        if not v or v in ('True', 'False', 'None', 'null'):
-            continue
-        if len(v) >= 5 or _CJK_RE.search(v):
-            T1.add(v)                    # 完整值 = 高危（中文名 2–3 字也算）
-        if '\\' in v or '/' in v:
-            for seg in v.replace('/', '\\').split('\\'):
-                seg = seg.strip()
-                if (len(seg) >= 5 or _CJK_RE.search(seg)) and seg.lower() not in GENERIC_SEG:
-                    T2.add(seg)
+            feed_value(s.split(':', 1)[1])
 
 
-feed_config(os.path.join(R, 'local', 'pipeline.yaml'))
-feed_config(os.path.join(R, 'local', 'pipeline.json'))
-feed_config(os.path.join(PROFILE, 'cordis.patch.yml'))
+def feed_json(path):
+    if not os.path.isfile(path):
+        return
+    try:
+        obj = json.load(io.open(path, encoding='utf-8'))
+    except (OSError, ValueError):
+        return
+    def walk(value):
+        if isinstance(value, dict):
+            for child in value.values():
+                walk(child)
+        elif isinstance(value, list):
+            for child in value:
+                walk(child)
+        elif isinstance(value, str):
+            feed_value(value)
+    walk(obj)
+
+
+feed_config(os.path.join(PRIVATE, 'pipeline.yaml'))
+feed_json(os.path.join(PRIVATE, 'pipeline.json'))
+feed_config(os.path.join(HOST_PROFILE, 'cordis.patch.yml'))
 # 通用/公开词不阻断、也不进报数档（否则满屏假阳性，范式 B：收了就虚报）
 # A50（2026-09-27）修：**含 CJK 的标记不受长度限制**。原来一刀切 `len(m) >= 5`，
-#   把「***REMOVED***」「***REMOVED***」这种 2–3 字的中文姓名整条吃掉 ⇒ 门禁报 T1=0，而包里真有名字
-#   （实测踩过：终验时 T1 说无命中，人工扫才发现 3 处老师真名）。
+#   会把 2–3 字的中文姓名整条吃掉，使门禁误报 T1=0。
 def _cjk(t):
     return any('\u4e00' <= c <= '\u9fff' for c in t)
 
@@ -139,7 +158,7 @@ def variants(m):
         out.add(urllib.parse.quote(m, safe=''))
     except Exception:
         pass
-    return {x for x in out if len(x) >= 5}
+    return {x for x in out if len(x) >= 5 or _cjk(x)}
 
 
 V1 = {}
@@ -153,13 +172,14 @@ for m in T2:
 
 print('标记表：T1(阻断) %d 个值 → %d 个变体；T2(报数) %d 个值 → %d 个变体'
       % (len(T1), len(V1), len(T2), len(V2)))
-print('  T1 例：%s' % ', '.join(sorted(T1)[:6]))
 
 
 def run(args):
     cmd = ' '.join('"%s"' % a if ' ' in a else a for a in args)
+    env = dict(os.environ)
+    env.setdefault('npm_config_cache', os.path.join(TMP, 'npm-cache'))
     r = subprocess.run(cmd, cwd=R, capture_output=True, text=True, encoding='utf-8',
-                       errors='replace', shell=True)
+                       errors='replace', shell=True, env=env)
     return r.returncode, (r.stdout or ''), (r.stderr or '')
 
 
@@ -196,7 +216,7 @@ for rel in packed:
             struct.append('禁入文件特征 %s：%s' % (w, rel))
 
 tracked = subprocess.run(['git', '-C', R, 'ls-files'], capture_output=True, text=True,
-                         encoding='utf-8').stdout.split()
+                         encoding='utf-8').stdout.splitlines()
 extra_in_pkg = [f for f in packed if f not in tracked and f != 'package.json']
 print('  仓库跟踪 %d 个；包内不在跟踪集的：%s' % (len(tracked), extra_in_pkg or '无'))
 if struct:
@@ -218,12 +238,17 @@ def read_any(path):
 
 
 h1, h2, hexes, unde = {}, {}, {}, []
+leaks = []
 for rel in packed:
     fp = os.path.join(pkg, rel.replace('/', os.sep))
     text, enc = read_any(fp)
     if text is None:
         unde.append(rel); continue
     nt = text.replace('\\\\', '\\').replace('/', '\\').lower()
+    if re.search(r'session-[0-9a-f]{8}(?:-[0-9a-f-]+)?', text, re.I):
+        leaks.append((rel, '真实会话 ID'))
+    if re.search(r'[a-z]:\\users\\(?!<|%|\{)[^\\\s`]+', text, re.I):
+        leaks.append((rel, '真实用户目录'))
     for v, m in V1.items():
         n = nt.count(v.lower())
         if n:
@@ -235,20 +260,60 @@ for rel in packed:
     for x in set(re.findall(r'[0-9a-f]{32,}', text.lower())):
         hexes.setdefault(rel, []).append('%s…(%d)' % (x[:12], len(x)))
 
+# 仓库上传也会泄露：扫描已跟踪及将来可能纳入的非忽略文件，不只扫描 npm 包。
+repo_candidates = subprocess.run(
+    ['git', '-C', R, 'ls-files', '--cached', '--others', '--exclude-standard'],
+    capture_output=True, text=True, encoding='utf-8').stdout.splitlines()
+repo_hits = {}
+for rel in repo_candidates:
+    fp = os.path.join(R, rel.replace('/', os.sep))
+    if not os.path.isfile(fp):
+        continue
+    body, _ = read_any(fp)
+    if body is None or '\x00' in body:
+        continue
+    normalized = body.replace('\\\\', '\\').replace('/', '\\').lower()
+    found = sum(normalized.count(v.lower()) for v in V1)
+    if found:
+        repo_hits[rel] = found
+
 print()
 print('== T1 阻断级命中 ==')
 if h1:
     for rel, d in sorted(h1.items()):
-        print('  %-38s %s' % (rel, ', '.join('%s×%d' % (k, v) for k, v in sorted(d.items()))))
+        print('  %-38s %d 个私密标记命中' % (rel, sum(d.values())))
+        # A67：**把命中行定位出来（掩码）** —— 只说"3 处"没法修，等于把排查推给下一个人；
+        #   标记本身也只显示前 2 字 + 长度，避免门禁输出自己变成泄漏面。
+        try:
+            _t, _ = read_any(os.path.join(pkg, rel.replace('/', os.sep)))
+            _shown = 0
+            for _i, _ln in enumerate((_t or '').splitlines(), 1):
+                _low = _ln.replace('\\\\', '\\').replace('/', '\\').lower()
+                _hit = sorted({str(m) for v, m in V1.items() if v.lower() in _low})
+                if _hit and _shown < 6:
+                    _s = _ln
+                    for v in V1:
+                        if v.lower() in _low:
+                            _s = re.sub(re.escape(v), '«命中»', _s, flags=re.I)
+                    print('      L%-4d %s   ← %s' % (_i, _s.strip()[:60],
+                          ', '.join((h[:2] + '…(%d)' % len(h)) for h in _hit)))
+                    _shown += 1
+        except Exception as _e:
+            print('      （定位失败：%s）' % _e)
     print('  合计 %d 个文件' % len(h1))
+else:
+    print('  无 ✔')
+print('== 仓库文件私人标记命中 ==')
+if repo_hits:
+    for rel, count in sorted(repo_hits.items()):
+        print('  %-38s %d 个私密标记命中' % (rel, count))
 else:
     print('  无 ✔')
 print()
 print('== T2 报数级命中（人眼判断，可能是通用段）==')
 if h2:
     for rel, d in sorted(h2.items(), key=lambda kv: -sum(kv[1].values()))[:18]:
-        print('  %-38s %s' % (rel, ', '.join('%s×%d' % (k, v) for k, v in
-              sorted(d.items(), key=lambda kv: -kv[1])[:6])))
+        print('  %-38s %d 个待审标记命中' % (rel, sum(d.values())))
     print('  合计 %d 个文件' % len(h2))
 else:
     print('  无')
@@ -263,7 +328,11 @@ if hexes:
 else:
     print('  无')
 
-ok = not struct and not h1
+if leaks:
+    print('== 结构化隐私候选 ==')
+    for rel, kind in leaks:
+        print('  %s: %s' % (rel, kind))
+ok = not struct and not h1 and not repo_hits and not extra_in_pkg and not leaks
 print()
 print('门禁判定：%s' % ('通过 ✔' if ok else '**未过，拒绝发布**'))
 
