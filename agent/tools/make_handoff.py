@@ -185,11 +185,11 @@ cd <个人目录>
 ## 9. 可粘贴开场提示词（给下一会话）
 
 ```
-接手 chat-feed / 聊天情报（D:\\Project\\DSH）。先读，按此顺序：
-1) D:\\Project\\DSH\\HANDOFF-2026-09-15-CHATFEED.md（本文，自包含：现状/运行态/文件地图/待办/坑）
-2) D:\\Project\\DSH\\chat-feed\\RESTART.md §0d（静态插件的五要素与判活，**别再用 cfhttp.ps1**）
+接手 chat-feed / 聊天情报（<工作区>）。先读，按此顺序：
+1) <工作区>\\HANDOFF-<日期>-<主题>.md（本文，自包含：现状/运行态/文件地图/待办/坑）
+2) <工作区>\\RESTART.md §0d（静态插件的五要素与判活，**别再用 cfhttp.ps1**）
 3) <个人目录>\\docs\\agent\\WORKING.md（主 agent 手册）
-4) D:\\Project\\DSH\\chat-feed\\docs\\PANEL_EXTENSION.md（面板扩展：数据驱动/热更新/接口自证）
+4) <工作区>\\docs\\PANEL_EXTENSION.md（面板扩展：数据驱动/热更新/接口自证）
 
 判活（第一件事，确认插件活着）：
   cd <个人目录>

@@ -3,7 +3,7 @@
 用法：python tools\\probe_boundary.py
 行为：
   1) 读回 output\\_probe_after_migration.txt 并打印（预期成功）；
-  2) 试写 D:\\Project\\DSH\\chat-feed\\_probe_should_fail.txt（预期被拒，打印原始异常）。
+  2) 试写 插件目录外的一个文件（预期被拒）（预期被拒，打印原始异常）。
 只做这两件事，不删任何文件。
 """
 import io

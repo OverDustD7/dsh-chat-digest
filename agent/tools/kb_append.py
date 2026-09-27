@@ -8,8 +8,8 @@ r"""批量回写知识库：**一次调用写完多个文件**（省主 agent �
   一轮下来 12–20 步。合并成一次调用是**纯赚**（不改任何语义）。
 
 用法（在本工具目录下）：
-    ..\\venv\\Scripts\\python.exe tools\\kb_append.py spec.json
-    ..\\venv\\Scripts\\python.exe tools\\kb_append.py spec.json --dry     # 只预览，不落盘
+    python tools\\kb_append.py spec.json
+    python tools\\kb_append.py spec.json --dry     # 只预览，不落盘
 
 spec.json（UTF-8 数组；每项一条写入）：
     [
