@@ -12,20 +12,18 @@
 It owns a panel, one resident main-agent session, and the HTTP contract between them. On a schedule — or
 when you click **Fetch** — the session reads your chat logs, picks out what you must do, what you can apply
 for, and what is worth knowing, and rewrites the panel items. Each item can link straight to the original
-file or image. The package ships **no chat-collection pipeline**: feed items over HTTP and the panel grows,
-so it works with whatever collector you already have — or with none at all.
+file or image. The core needs no collector; an optional WeChat/QQ pipeline ships with the package.
+You can also place exports in a private inbox or feed items over HTTP.
 
 ## Quick start (a fresh install)
 
 Three steps, no pipeline required — the plugin has a **default data contract**: put chat exports in
 `inbox\` under the agent workspace and the resident session reads them.
 
-1. Install and restart (see *Install* below), then click **Fetch** once. The resident session is created
-   and the round prompt tells it to read the inbox.
-2. Drop your chat exports into the inbox — plain text, Markdown or JSON (`%LOCALAPPDATA%\dsh-chat-digest\
-   workspace\inbox\` with the default `stateDir`; the exact path is `state.inbox` in
+1. Install and restart (see *Install* below). Drop your chat exports into the inbox — plain text, Markdown or JSON (`%USERPROFILE%\.dsh\dsh-chat-digest\inbox\`
+   by default; the exact path is `state.inbox` in
    `GET /chat-feed/api/state`). `examples/inbox/sample.txt` is a tiny sample you can copy in.
-3. Click **Fetch** again. Items appear in the panel, each linking to the file it came from.
+2. Click **Fetch** once. The resident session reads the inbox and adds items to the panel, each linking to its source file.
 
 Want your own wording or your own collector? Copy `examples/local/` into a directory of your own, point
 `config.localDir` at it, and edit the "where the data comes from" section.
@@ -106,7 +104,7 @@ dsh plugin --profile web add link:/path/to/dsh-chat-digest
   running anything**, so you can read exactly what the agent will be told.
 - Click **Fetch**: the button goes `探测中…` → `采集中…` and the panel opens. If the gateway does not answer
   it flashes red, and neither the cursor nor the collection time changes.
-- On disk: `%LOCALAPPDATA%\dsh-chat-digest\state.json` (items, cursor, route slots) and `panel.json`.
+- On disk: `state.json` (items, cursor, route slots) and `panel.json` inside the private profile.
 
 A fresh install stays empty until you feed items in or run a round. That is expected: the pipeline is yours.
 
@@ -118,7 +116,7 @@ better, in your own profile patch (`$DSH_HOME/profiles/<name>/cordis.patch.yml`)
 ```yaml
 - id: dsh-chat-digest
   config:
-    agentCwd: 'C:\path\to\your\agent-workspace'      # the resident session's cwd = its workspace
+    localDir: 'C:\path\to\your\private-profile'       # private data and resident session workspace
     wxRoot: 'C:\path\to\wechat\attachments'
     routes:
       - id: 'free'
@@ -138,11 +136,11 @@ better, in your own profile patch (`$DSH_HOME/profiles/<name>/cordis.patch.yml`)
 |---|---|---|
 | `bodyPath` | `<package>/lib/host-body.txt` | the authoritative host body; `DSH_CHAT_FEED_BODY` overrides it |
 | `stateDir` | `localDir` (the private profile) | where `state.json` and `panel.json` live |
-| `agentCwd` | `localDir` (the private profile) | the resident session's cwd = its **workspace**; that is the write boundary |
+| `agentCwd` | `localDir` (the private profile) | must resolve to the same physical directory as `localDir`; normally omit it |
 | `dshHome` | `$DSH_HOME`, else `%USERPROFILE%\.dsh` | used to read session titles |
 | `agentPreset` | empty | agent preset to create the sessions with |
 | `routes` | one generic route | `[{ id, label, provider?, model?, effort?, probeUrl?, ctxRatio?, default?, hint? }]`. Two routes is the intended shape; with none configured there is a single route that pins no provider or model, so the session inherits the host default |
-| `localDir` | `<package>/local` (runtime junction → the private profile) | **your private profile** — see below |
+| `localDir` | `<DSH_HOME>/dsh-chat-digest` | **the physical private profile directory** — see below |
 | `inboxDir` | `<agentCwd>\inbox` | the default data source the built-in prompts tell the agent to read. `{inbox}` in a `local/round.md` expands to it, and it is in `fileRoots` by default |
 | `wxRoot` | **none — set it** | WeChat attachment root — only needed for attachments outside the inbox and `<agentCwd>\output` |
 | `fileRoots` | `[wxRoot, <agentCwd>\output]` | roots allowed for byte serving and "open in the default app" (rejects `..`, absolute paths outside the roots, and UNC) |
@@ -159,15 +157,15 @@ live in the plugin's own profile directory:
     docs/  state.json  panel.json  profile.md
 ```
 
-- **Path-wise it is inside the plugin directory**: `<package>/local` (alias `<package>/profile`),
-  `agent/output`, `agent/docs/knowledge` and `agent/docs/archive` are **runtime junctions**, recreated on mount.
+- `<package>/local`, `<package>/profile`, `agent/output` and `agent/docs/{knowledge,archive}` are
+  compatibility junctions. The session cwd and all new writes use the physical private directory.
 - **Why not inside the package**: `dsh plugin add <package>@<version>` rebuilds the whole package
   directory, so private files kept there are lost on every update.
 - **Why not somewhere else**: under `~/.dsh` the `*` rule in `~/.dsh/.gitignore` ignores it, and the
   repository `.gitignore` plus the package `files` whitelist exclude `local`/`profile`/`output`/
   `knowledge`/`archive`/`state` — three layers, so it is **never uploaded**.
-- **It runs without it**: on a fresh machine the mount seeds what it needs, builds the junctions and
-  writes everything into this directory.
+- **Fresh installs work**: mount creates an empty private directory and compatibility junctions;
+  it never copies the sample chat into the inbox automatically.
 
 ### Your own prompts
 
@@ -176,27 +174,25 @@ The wake prompt and the per-round instruction **ship inside the package** (gener
 | Where | What |
 |---|---|
 | `<package>/prompt/prompt.md` | the prompt that wakes the main agent |
-| `<package>/prompt/round.md` | the per-round instruction (`{date}`, `{mode}`, `{agent}`, `{pkg}`, `{profile}`, `{py}`, `{work}` are substituted) |
+| `<package>/prompt/round.md` | the per-round instruction (`{date}`, `{mode}`, `{since}`, `{agent}`, `{pkg}`, `{profile}`, `{py}`, `{work}` are substituted) |
 
 To use your own wording, drop a `prompt.md` / `round.md` of the same name into your **private profile**;
 it wins. Lookup order = **private profile → `<package>/prompt/` → built-in generic**.
 
-`localDir` resolves in this order: `config.localDir` → `$DSH_CHAT_FEED_LOCAL` → `<package>/local`. The
+`localDir` resolves in this order: `config.localDir` → `$DSH_CHAT_FEED_LOCAL` → `<DSH_HOME>/dsh-chat-digest`. The
 directory is `.gitignore`d and excluded from the published `files` whitelist, so private prompts and paths
 never reach the repository or the npm tarball.
 
 ## What it writes, and what it costs
 
-- State only, under `stateDir`: `state.json` (atomic write, a `.bak` copy, and a `.corrupt-<ts>` quarantine
-  when a file fails to parse) and `panel.json`. Nothing is written inside `node_modules`, and no file of
-  yours is modified. A bad state file is never deleted.
+- Core state lives under `stateDir`: `state.json` (atomic write, a `.bak` copy, and a `.corrupt-<ts>` quarantine
+  when parsing fails) and `panel.json`. The optional pipeline writes products under the private profile's
+  `output/`; the package directory stays read-only. A bad state file is never deleted.
 - Legacy state locations (`%LOCALAPPDATA%\chat-feed\`, `<旧临时目录>\`, `%TEMP%\dsh-chat-digest\`) are
   read once as migration sources, then left in place.
-- A round costs that route's tokens: it reads your chats and rewrites the panel. There is no other cost, and
-  no telemetry.
-- Rotation is per route — `ctxRatio` of the session's window. The author's two routes use `0.75` (a 200k
-  route) and `0.5` (a 1M route).
-- The plugin stores **no credentials**: model routes and API keys come from DSH's model configuration.
+- A round uses the configured model route and any optional collector you enable. The plugin sends no telemetry.
+- Rotation is per route, according to that route's `ctxRatio` setting.
+- Model credentials come from DSH. Optional database keys belong only in the private profile.
 
 ## Uninstall
 
@@ -204,7 +200,7 @@ never reach the repository or the npm tarball.
 dsh plugin --profile web remove dsh-chat-digest
 ```
 
-Then restart. Delete `%LOCALAPPDATA%\dsh-chat-digest\` if you also want the panel data gone — deliberately a
+Then restart. Delete `<DSH_HOME>\dsh-chat-digest\` if you also want the panel data gone — deliberately a
 manual step, since it is the only copy.
 
 ## Troubleshooting
@@ -220,9 +216,10 @@ manual step, since it is the only copy.
 
 ## What it does not do
 
-- **It does not ship an ingestion pipeline.** WeChat decryption, message extraction, image triage and
-  attachment indexing belong to a workspace of your own, driven by the resident agent. This package owns the
-  panel, the session and the contract between them. See the `docs/` directory of the source repository.
+- **The optional ingestion pipeline needs extra software and your own data.** Its scripts ship in `pipeline/`;
+  their Python packages are listed in `pipeline/requirements.txt`. Configure `python` and `external_dir` in
+  the private `pipeline.yaml` for the interpreter, WeChat decryptor, and QQ export tool; update these local paths
+  after moving machines. The core panel and inbox path have no npm dependencies.
 - **It does not ship model credentials**, and it does not choose models outside your `routes`.
 - **It does not do off-site backup.** Copy `stateDir` yourself if you want one.
 - It has only been verified on Windows.

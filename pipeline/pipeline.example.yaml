@@ -3,7 +3,7 @@
 #
 #   <localDir>/pipeline.yaml
 #
-# localDir 与插件一致：$DSH_CHAT_FEED_LOCAL → 包旁的 local/。
+# localDir 与插件一致：$DSH_CHAT_FEED_LOCAL → $DSH_HOME/dsh-chat-digest。
 # 代码里不写死任何值 —— 缺哪个键，脚本会打印缺什么、去哪个文件填，然后退出。
 
 # ── 微信 ──────────────────────────────────────────────────────────────
@@ -37,8 +37,8 @@ output_dir: 'C:\path\to\your\pipeline-workspace\output'
 groups: []
 
 # ── A35（2026-09-27）：下面这几个键**都不用配**，缺省就在插件目录里 ──────────────
-#   work_dir      管线读写的工作区根；缺省＝<插件目录>/agent
-#   output_dir    产物根；缺省＝<插件目录>/agent/output
+#   work_dir      管线读写的工作区根；缺省＝私人 profile 的物理目录
+#   output_dir    产物根；缺省＝私人 profile/output
 #   python        跑管线/工具用哪个解释器；缺省＝宿主缺省或 PATH 里的 python
 #   external_dir  **包外第三方工具**的根目录（只有你要跑内置取数管线时才需要）：
 #                   微信库解密：<external_dir>/WeChatDataAnalysis

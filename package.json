@@ -1,7 +1,7 @@
 {
   "name": "dsh-chat-digest",
   "version": "1.5.0",
-  "description": "Turn WeChat / QQ chat logs into one panel list that keeps growing, maintained by a resident main-agent session. Ships no ingestion pipeline: feed items over HTTP and the panel grows. Installs as a DSH profile bundle (Cordis plugin).",
+  "description": "Turn chat logs into a panel list maintained by a resident agent. Includes a zero npm-dependency core and an optional WeChat/QQ ingestion pipeline. Installs as a DSH profile bundle.",
   "type": "module",
   "main": "lib/plugin.js",
   "files": [
@@ -32,8 +32,9 @@
     "check": "node --check lib/plugin.js && node --check lib/ui.js && node --check lib/right.js",
     "check:body": "python tools/check_host_body.py",
     "test:host": "node test/host-behavior-checks.mjs",
+    "test:portability": "node test/portability-checks.mjs",
     "test:pipeline": "python test/pipeline-behavior-checks.py",
-    "prepack": "npm run check && npm run test:host"
+    "prepack": "npm run check && npm run test:host && npm run test:portability"
   },
   "repository": {
     "type": "git",

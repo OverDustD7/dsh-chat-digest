@@ -28,6 +28,8 @@ jobs:
         run: npm run check
       - name: Host probes
         run: npm run test:host
+      - name: Portability probe
+        run: npm run test:portability
       # The two Python probes are deliberately local-only: they are the author's
       # own instruments (they write scratch copies to the system temp dir and the
       # pipeline probe needs the author's fixtures), not a release gate.

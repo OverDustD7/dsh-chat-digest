@@ -11,18 +11,17 @@
 
 它管三样东西：一块面板、一条常驻主 agent 会话、以及两者之间的 HTTP 契约。按定时——或者你点一下侧栏的
 **「获取」**——那条会话就去读你的聊天记录，挑出「必须做的」「可以报名的」「值得知道的」，重写面板条目；
-每条都能直接链到原始文件或图片。**本包不带取数管线**：把条目用 HTTP 喂进来，面板就会长出来，
-所以你用现成的采集器也行，什么都不接也行。
+每条都能直接链到原始文件或图片。插件核心无需取数依赖；包内另附可选的微信/QQ 管线。
+也可以把聊天导出放进私人 `inbox/`，或通过 HTTP 喂入条目。
 
 ## 装完三步走（全新安装）
 
 **不需要取数管线** —— 插件有一个**默认数据约定**：把聊天导出丢进主 agent 工作区下的 `inbox\`，常驻会话会去读它。
 
-1. 装上并重启（见下面「安装」），点一次**「获取」**。常驻会话会被建出来，轮次提示词会让它去读 inbox。
-2. 把聊天导出丢进 inbox —— 纯文本 / Markdown / JSON 都行（默认 `stateDir` 下就是
-   `%LOCALAPPDATA%\dsh-chat-digest\workspace\inbox\`；确切路径看 `GET /chat-feed/api/state` 的 `inbox` 字段）。
+1. 装上并重启（见下面「安装」）。把聊天导出丢进 inbox —— 纯文本 / Markdown / JSON 都行（默认
+   `%USERPROFILE%\.dsh\dsh-chat-digest\inbox\`；确切路径看 `GET /chat-feed/api/state` 的 `inbox` 字段）。
    `examples/inbox/sample.txt` 是一份可以直接复制进去的小样例。
-3. 再点一次**「获取」**。面板上就长出条目，每条都链回它来自哪个文件。
+2. 点一次**「获取」**。常驻会话会创建并读取 inbox，面板上出现条目，每条都链回来源文件。
 
 想换成你自己的说法或自己的采集器？把 `examples/local/` 复制到你自己的一个目录，用 `config.localDir` 指过去，
 改「数据从哪来」那一节就行。
@@ -100,7 +99,7 @@ dsh plugin --profile web add link:/path/to/dsh-chat-digest
   所以你能读到主 agent 究竟会被告知什么。
 - 点侧栏**「获取」**：按钮走 `探测中…` → `采集中…`，面板自动打开；网关不通就闪红，
   采集指针与采集时间都不变。
-- 盘上：`%LOCALAPPDATA%\dsh-chat-digest\state.json`（条目、游标、线路槽）与 `panel.json`。
+- 盘上：私人 profile 内的 `state.json`（条目、游标、线路槽）与 `panel.json`。
 
 新装完是空的，直到你喂进条目或跑一轮为止 —— 这是预期的：管线是你的。
 
@@ -112,7 +111,7 @@ dsh plugin --profile web add link:/path/to/dsh-chat-digest
 ```yaml
 - id: dsh-chat-digest
   config:
-    agentCwd: 'C:\path\to\your\agent-workspace'      # 常驻会话的 cwd ＝ 它的工作区
+    localDir: 'C:\path\to\your\private-profile'       # 私人数据与常驻会话的工作区
     wxRoot: 'C:\path\to\wechat\attachments'
     routes:
       - id: 'free'
@@ -132,11 +131,11 @@ dsh plugin --profile web add link:/path/to/dsh-chat-digest
 |---|---|---|
 | `bodyPath` | `<包>/lib/host-body.txt` | 权威 Host 函数体；可用 `DSH_CHAT_FEED_BODY` 覆盖 |
 | `stateDir` | `localDir`（＝私人 profile） | `state.json` 与 `panel.json` 的位置 |
-| `agentCwd` | `localDir`（＝私人 profile） | 常驻会话的 cwd ＝ 它的**工作区**；可写边界就是它 |
+| `agentCwd` | `localDir`（＝私人 profile） | 必须与 `localDir` 指向同一物理目录；通常无需配置 |
 | `dshHome` | `$DSH_HOME`，否则 `%USERPROFILE%\.dsh` | 读会话标题用 |
 | `agentPreset` | 空 | 建会话时带的 agent preset |
 | `routes` | 一条通用线路 | `[{ id, label, provider?, model?, effort?, probeUrl?, ctxRatio?, default?, hint? }]`。两条线是设计形态；不配则只有一条不指定 provider/model 的线路，会话继承宿主默认 |
-| `localDir` | `<包>/local`（运行时联接 → 私人 profile） | **你的私人 profile**；见下 |
+| `localDir` | `<DSH_HOME>/dsh-chat-digest` | **你的私人 profile 的物理目录**；见下 |
 | `inboxDir` | `<agentCwd>\inbox` | 内置提示词让 agent 去读的**默认数据来源**；`local/round.md` 里的 `{inbox}` 就是它，且它默认在 `fileRoots` 里 |
 | `wxRoot` | **无缺省** | 微信附件根 —— 只有当附件在 inbox 与 `<agentCwd>\output` 之外才需要 |
 | `fileRoots` | `[wxRoot, <agentCwd>\output]` | 允许取字节 / 用默认应用打开的根（拒绝 `..`、根外绝对路径、UNC） |
@@ -152,13 +151,13 @@ dsh plugin --profile web add link:/path/to/dsh-chat-digest
     docs/  state.json  panel.json  profile.md
 ```
 
-- **路径上它就在插件目录里**：`<包>/local`（别名 `<包>/profile`）与 `agent/output`、
-  `agent/docs/knowledge`、`agent/docs/archive` 都是**运行时联接**，挂载时自动重建。
+- `<包>/local`、`<包>/profile`、`agent/output` 和 `agent/docs/{knowledge,archive}` 是兼容旧路径的运行时联接。
+  会话 cwd 与所有新代码的写入路径均使用**私人目录的物理路径**，不经这些联接写入。
 - **为什么不直接放包里**：`dsh plugin add <包>@<版本>` 会**整体重建包目录**，放里面的私人文件每次更新都没。
 - **为什么不放别处**：放 `~/.dsh` 下（本页默认位置）由 `~/.dsh/.gitignore` 的 `*` 规则忽略，
   仓库 `.gitignore` 与包的 `files` 白名单也排掉 `local`/`profile`/`output`/`knowledge`/`archive`/`state`
   —— 三处都挡住，**不会上传**。
-- **缺了它也能跑**：新机器上挂载时会自动播种、自建联接，写入落到这个目录。
+- **新机器可直接安装**：挂载时创建空的私人目录及兼容联接；示例聊天不会自动放进 inbox。
 
 ### 你自己的提示词
 
@@ -167,20 +166,19 @@ dsh plugin --profile web add link:/path/to/dsh-chat-digest
 | 放哪 | 放什么 |
 |---|---|
 | `<包>/prompt/prompt.md` | 唤醒主 agent 的提示词 |
-| `<包>/prompt/round.md` | 每轮的指令（`{date}`/`{mode}`/`{agent}`/`{pkg}`/`{profile}`/`{py}`/`{work}` 会被替换） |
+| `<包>/prompt/round.md` | 每轮的指令（`{date}`/`{mode}`/`{since}`/`{agent}`/`{pkg}`/`{profile}`/`{py}`/`{work}` 会被替换） |
 
 想改成你自己的说法：在**私人 profile** 放一份同名的 `prompt.md` / `round.md` 即覆盖。
 加载顺序 = **私人 profile → `<包>/prompt/` → 内置通用**；三份都不在时退回内置的短提示词。
 
-`localDir` 的解析顺序：`config.localDir` → `$DSH_CHAT_FEED_LOCAL` → `<包>/local`（运行时联接 →
-私人 profile）。私人 profile 已被 `~/.dsh/.gitignore`、仓库 `.gitignore` 与包的 `files` 白名单三处排掉
+`localDir` 的解析顺序：`config.localDir` → `$DSH_CHAT_FEED_LOCAL` → `<DSH_HOME>/dsh-chat-digest`
+（若无 DSH_HOME，则用用户目录下的 `.dsh`）。私人 profile 已被 `~/.dsh/.gitignore`、仓库 `.gitignore` 与包的 `files` 白名单三处排掉
 —— 私人提示词与路径**永远不会**进仓库或 npm 包。
 
 ## 它写什么、花什么
 
-- **只写状态**，都在 `stateDir`（缺省＝私人 profile）下：`state.json`（原子写 + 一份 `.bak`；解析失败时
-  把坏件隔离成 `.corrupt-<ts>`）与 `panel.json`。**不往包里写** —— `<包>/local`、`agent/output`、
-  `agent/docs/{knowledge,archive}` 都是运行时联接，真身在私人 profile 里；坏件**从不删**。
+- **状态**写在 `stateDir`（缺省＝私人 profile）下：`state.json`（原子写 + 一份 `.bak`；解析失败时
+  把坏件隔离成 `.corrupt-<ts>`）与 `panel.json`。可选管线的产物写在私人 profile 的 `output/`；坏件**从不删**。
 - 旧位置（`%LOCALAPPDATA%\chat-feed\`、`<旧临时目录>\`、`%TEMP%\dsh-chat-digest\`）只作为
   **一次性迁移来源**读一次，读完原样留着。
 - 一轮的花费就是那条线路的 token：它读你的聊天、重写面板。除此之外没有别的开销，也没有遥测。
@@ -209,8 +207,9 @@ dsh plugin --profile web remove dsh-chat-digest
 
 ## 它**不**做什么
 
-- **不带取数管线。** 微信解密、消息提取、图片分诊、附件索引都属于你自己的一个工作区，由常驻 agent 驱动。
-  本包管的是面板、会话与两者之间的契约。为什么这么分见 源码仓库里的 `docs/` 目录。
+- **可选管线需要额外环境。** 包内 `pipeline/` 含微信/QQ 脚本；使用时需在私人 `pipeline.yaml`
+  设置 `python`（已安装 `pipeline/requirements.txt` 的解释器）及 `external_dir`（微信解密器与 QQ 导出工具所在目录），
+  并提供本机消息数据库。迁移到新电脑时需要重新配置这些本机路径。不用管线时，插件核心没有 npm 依赖。
 - **不带模型凭据**，也不会选你 `routes` 之外的模型。
 - **不做异地备份。** 想要就自己拷 `stateDir`。
 - 只在 Windows 上验证过。
