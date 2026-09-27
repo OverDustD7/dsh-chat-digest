@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-r"""跑前先探"***REMOVED***免费网关（THU）还通不通" —— 通就用 THU，不通才回 paratera（用户 2026-09-17 定的规矩）。
+r"""跑前先探"某高校免费网关（THU）还通不通" —— 通就用 THU，不通才回 paratera（用户 2026-09-17 定的规矩）。
 
 为什么要它：用户 2026-09-17 明确「每次跑之前先检测 THU 连通性，如果可以用 THU 就用 THU，不可以才用 paratera」。
 背景事实（实测）：THU（provider `deepseek`，`<部署方的免费网关>`）**免费但很不稳定** ——
@@ -233,7 +233,7 @@ def main():
                      "有" if v.get("keyFound") else "**缺**", (v.get("detail") or "")[:90]))
         print("\n结论：%s" % verdict)
         if pack.get("needsUserConfirm"):
-            print("**这一步要停下来问他**：`ask_user_question`「***REMOVED***网关现在不通，这一轮要不要改走 paratera（付费，约 ¥2–3/轮）？」"
+            print("**这一步要停下来问他**：`ask_user_question`「某高校网关现在不通，这一轮要不要改走 paratera（付费，约 ¥2–3/轮）？」"
                   "——他同意后才 `POST /chat-feed/api/route` {\"provider\":\"<供应商>\",\"model\":\"<模型>\"}；"
                   "不同意就**这一轮不跑**或只做 0 元的本地部分。")
         print("架构：**两个常驻会话**（`sessThu` 免费·200k / `sessParatera` 付费·1M）—— 按需切换用哪个，"

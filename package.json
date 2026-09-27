@@ -19,7 +19,9 @@
     "!agent/docs/knowledge",
     "!agent/docs/archive",
     "!**/__pycache__",
-    "!**/*.pyc"
+    "!**/*.pyc",
+    "!local",
+    "!profile"
   ],
   "engines": {
     "node": ">=22.5",
@@ -40,7 +42,7 @@
   "bugs": {
     "url": "https://github.com/OverDustD7/dsh-chat-digest/issues"
   },
-  "author": "***REMOVED*** (OverDustD7)",
+  "author": "用户 (OverDustD7)",
   "keywords": [
     "dsh",
     "deepseek-harness",

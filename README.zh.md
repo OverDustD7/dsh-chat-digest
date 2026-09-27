@@ -157,7 +157,7 @@ dsh plugin --profile web add link:/path/to/dsh-chat-digest
 
 - **只写状态**，都在 `stateDir` 下：`state.json`（原子写 + 一份 `.bak`；解析失败时把坏件隔离成
   `.corrupt-<ts>`）与 `panel.json`。不往 `node_modules` 里写，也不改你任何文件；坏件**从不删**。
-- 旧位置（`%LOCALAPPDATA%\chat-feed\`、`%TEMP%\chat-feed\`、`%TEMP%\dsh-chat-digest\`）只作为
+- 旧位置（`%LOCALAPPDATA%\chat-feed\`、`<旧临时目录>\`、`%TEMP%\dsh-chat-digest\`）只作为
   **一次性迁移来源**读一次，读完原样留着。
 - 一轮的花费就是那条线路的 token：它读你的聊天、重写面板。除此之外没有别的开销，也没有遥测。
 - 轮换**按线路**算 —— 会话窗口的 `ctxRatio`。作者这两条线用 `0.75`（200k 那条）与 `0.5`（1M 那条）。

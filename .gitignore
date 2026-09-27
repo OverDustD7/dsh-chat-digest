@@ -70,3 +70,8 @@ agent/docs/archive/
 /test/fixtures/daily/
 *.before-*
 *.corrupt-*
+
+# A38（2026-09-27）：插件目录下的私人 profile（运行时联接，指到包外真身）——
+#   绝不能进仓库、也不能进 npm 包。
+/local/
+/profile/
