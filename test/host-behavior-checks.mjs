@@ -254,5 +254,33 @@ function loadStateWith(S, files, stateFile, stateOld, saveCalls) {
          {archived:['session-A'],paratera:'',retired:1},
          {archived:archived,paratera:String(S.sessParatera),retired:n});
 }
+// A63（2026-09-27 实测事故）：**派发一轮前必须正向断言目标会话可信**。
+//   事故：16:13:39 用户点「获取」，那一轮被发进 `session-24ffb007`（cwd＝包内 `agent/` 的老会话，
+//   `busyFor` 就是它）—— 它的可写边界是包目录 ⇒ 管线产物一个字写不出来、整轮白跑，还把写权限
+//   探针文件写进了包里。判据取舍：判死可以 fail-open（A29 的教训），**派发必须 fail-closed**，
+//   而且**不许依赖元数据**（元数据读不到就放行 —— 那正是这次的洞）⇒ 只认"亲手建过的会话"。
+{
+  const src = chunk('const pickRoute = async (route, why) => {', '// 插件侧连通性探测') + 'return pickRoute;';
+  const mk = async (trusted) => {
+    const S = { sessionId: 'session-OLD', sessParatera: 'session-OLD', sessThu: '', busy: false };
+    const fn = new Function('S', 'ensureRouteSession', 'createRouteSession', 'retireCwdStale',
+      'cwdTrust', 'routeSlotKey', 'saveState', 'ROUTE_MODELS', src);
+    const pick = fn(S, async (r, s) => { s.push('slot:reused:session-OLD'); return 'session-OLD' },
+      async (r, s) => { s.push('created:session-NEW'); return 'session-NEW' },
+      async () => 0, () => trusted, () => 'sessParatera', async () => 'saved',
+      { paratera: { provider: 'p', model: 'm' }, thu: { provider: 'p', model: 'm' } });
+    const r = await pick('paratera', 'probe:paratera 可达');
+    return { r: r, S: S };
+  };
+  const bad = await mk(false);
+  const good = await mk(true);
+  record('H26_untrusted_dispatch_retargeted',
+         { retargeted: true, ok: true, sid: 'session-NEW', slot: 'session-NEW', step: true,
+           trustedNoRetarget: false, trustedKeepsId: 'session-OLD' },
+         { retargeted: !!bad.r.retargeted, ok: !!bad.r.ok, sid: bad.S.sessionId,
+           slot: bad.S.sessParatera,
+           step: (bad.r.steps || []).some((s) => String(s).indexOf('dispatch-retarget:') === 0),
+           trustedNoRetarget: !!good.r.retargeted, trustedKeepsId: good.r.sessionId });
+}
 fs.writeFileSync(path.join(dir,'host-behavior-results.json'),JSON.stringify(results,null,2));
 console.log(JSON.stringify(results,null,2));
