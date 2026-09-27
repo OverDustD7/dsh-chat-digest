@@ -38,6 +38,8 @@ WX_KEY_DIR = C.get("wx_key_dir")
 QQ_DATA_DIR = C.get("qq_data_dir")
 WORK_DIR = work_dir()
 SELF_WXID = C.get("self_wxid")
+# A55：原来只定义了 SELF_WXID，SELF_QQ 从没定义过 —— 这两步一跑就 NameError
+SELF_QQ = C.req("self_qq", "QQ 号（qq_data_dir 下就是它那个账号目录）")
 MAIN_GROUP = C.get("main_group")
 
 OUT_DIR = out_dir()
