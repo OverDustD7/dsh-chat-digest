@@ -13,7 +13,7 @@ import traceback
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 INSIDE = os.path.join(ROOT, "output", "_probe_after_migration.txt")
-OUTSIDE = r"D:\Project\DSH\chat-feed\_probe_should_fail.txt"
+OUTSIDE = os.path.join(os.path.dirname(ROOT), '_probe_should_fail.txt')   # 插件目录之外（＝它的上一层），A35 起不再写死某台机器的路径
 
 try:
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace", line_buffering=True)
