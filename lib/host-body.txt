@@ -1276,9 +1276,9 @@ const ROUND_GENERIC = (date, mode) => [
   "2) **提炼**：从里面挑出**对人有用的事**，做成面板条目（一句话总结 ＋ 按信息量定的正文）。",
   "3) **回写**：`POST /chat-feed/api/items-patch` 打补丁；新条目带 `isNew`。",
   "4) **回报**：读到了什么、写了哪几条、哪些没做成。",
-].join('\n');const roundPrompt = (date, reason, since, mode) => {
-  const tpl = (typeof CF.roundText === 'string' && CF.roundText) ? CF.roundText : '';
-  const body = tpl ? TPL(tpl, date, mode, since) : TPL(ROUND_GENERIC(date, mode), date, mode, since);
+].join('\n');
+const renderRound = (tpl, date, reason, since, mode) => {
+  const body = (typeof tpl === 'string' && tpl) ? TPL(tpl, date, mode, since) : TPL(ROUND_GENERIC(date, mode), date, mode, since);
   // A64（2026-09-27 用户指出的真问题）：**触发原因与提问规则由代码注入，模板里不许写死**。
   //   实测：私人 `round.md` 里那句写死的"本轮是「自动/补跑」触发的，绝对不许用 ask_user_question
   //   阻塞"被**每一轮**用上 —— 用户手动点的那一轮也被当成自动轮；同一段里第一行写"用户点了获取"、
@@ -1288,6 +1288,27 @@ const ROUND_GENERIC = (date, mode) => [
     ? '\n\n【提问规则·代码注入】本轮由**用户手动点「获取」**触发：拿不准的可以用一次 `ask_user_question`（**只有这种轮允许提问**）；其余按现行规则自行判断，把这一轮做完（取数 → 成稿 → 回写面板）。'
     : '\n\n【提问规则·代码注入】本轮由**自动/补跑**触发：**不许**用 `ask_user_question` 阻塞（卡片不弹到前台，会把整轮静默拖死）；拿不准的写 `{profile}\\output\\window\\round_state.md` 的「待确认价值」一节 ＋ 收尾回报，**先按现行规则把这一轮做完（取数 → 成稿 → 回写面板）**。';
   return TPL(body + ask, date, mode, since);
+};
+const roundPrompt = (date, reason, since, mode) => renderRound((typeof CF.roundText === 'string') ? CF.roundText : '', date, reason, since, mode);
+// ── A68（2026-09-27）：**提示词在"发车那一刻"从磁盘读**，不再只用挂载时缓存的那份 ────────────────
+//: 为什么：宿主半边只在挂载时求值 ⇒ 改一次提示词就得重启一次 `dsh web`（今天为此重启了 5 次，
+//:   每次都要用户动手）。读法＝包内 `{pkg}\prompt\round.md` + 私人 `<profile>\round.md`
+//:   （私人那份**追加**在后面，与 `lib/plugin.js` 的 `appendLocal` 同一口径）。读不到就退回挂载那份。
+const readPromptNow = async (name, privateSide) => {
+  let p = '';
+  try { p = privateSide ? (String(CF.localDir || '') + '\\' + name) : (String(CF.pkgDir || '') + '\\prompt\\' + name) } catch (e) { return '' }
+  if (!p || p === '\\' + name) return '';
+  try {
+    const t = await fsSvc.readText(await fsSvc.resolve(p));
+    return (t && String(t).trim()) ? String(t) : '';
+  } catch (e) { return '' }
+};
+const roundPromptLive = async (date, reason, since, mode) => {
+  const pub = await readPromptNow('round.md', false);
+  if (!pub) return roundPrompt(date, reason, since, mode);          // 退回挂载时那份（向后兼容）
+  const priv = await readPromptNow('round.md', true);
+  return renderRound(priv ? (String(pub).trim() + '\n\n<!-- 以下为本机补充 -->\n' + String(priv).trim()) : pub,
+                     date, reason, since, mode);
 };
 
       const turnEnds = async (sc, sid) => {
@@ -1678,8 +1699,11 @@ const ROUND_GENERIC = (date, mode) => [
         const date = cstDay();
         const base = await turnEnds(sc);                 // 触发前的 turn/end 计数 = 基线
         try {
+          // A68：提示词**在发车这一刻从磁盘读**（包内 + 私人补充），读不到才退回挂载时那份 ⇒
+          //   以后改提示词不用再重启宿主（今天为「改提示词」重启了 5 次，每次都要用户动手）。
+          const promptText = await roundPromptLive(date, reason, S.lastCollectAt || 0, mode);
           await sc.prompt({ requestId: 'collect-' + Date.now(), sessionId: S.sessionId, mode: 'queue',
-                            content: [{ type: 'text', text: roundPrompt(date, reason, S.lastCollectAt || 0, mode) }] }, FAKE_SIGNAL);
+                            content: [{ type: 'text', text: promptText }] }, FAKE_SIGNAL);
         } catch (e) { noteError('collect-prompt', e); return { ok: false, error: String((e && e.message) || e) } }
         S.busy = true; S.busySince = Date.now(); S.busyBase = base;
         // **记下这一轮到底发进了哪个会话**（2026-09-17 晚加）：这一轮跑起来之后 `S.sessionId` 有可能被

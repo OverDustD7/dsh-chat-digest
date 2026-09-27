@@ -43,7 +43,7 @@ function record(id, expected, actual){results.push({id,expected,actual,pass:JSON
 }
 {
  const S={busy:false,sessionId:'test',routePick:'paratera',lastCollectAt:1};let prompts=0;
- const fire=new Function('S','cstDay','turnEnds','roundPrompt','FAKE_SIGNAL','noteError','saveState',chunk('const fireRound = async (sc, reason, pick, mode, probeRes) => {','// ---- 上下文用量探测')+'return fireRound;')(S,()=> '2026-09-20',async()=>0,()=>'',{},()=>{},async()=>{});
+ const fire=new Function('S','cstDay','turnEnds','roundPrompt','roundPromptLive','FAKE_SIGNAL','noteError','saveState',chunk('const fireRound = async (sc, reason, pick, mode, probeRes) => {','// ---- 上下文用量探测')+'return fireRound;')(S,()=> '2026-09-20',async()=>0,()=>'',async()=>'',{},()=>{},async()=>{});
  await fire({prompt:async()=>prompts++},'manual',{},'full',{});
  record('H06_cursor_waits_for_successful_delivery',1,S.lastCollectAt);
 }

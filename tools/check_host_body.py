@@ -222,7 +222,7 @@ for frag in ("const DIR =", "const WAKE_TEXT =", "apply(ctx)",
              ".replace(/\\{agent\\}/g, AGENT_ROOT)", ".replace(/\\{work\\}/g, AGENT_CWD)",
              "const AGENT_ROOT",
              # A35（2026-09-27）：round 提示词也走 TPL（原来只换 date/mode/inbox，17 个路径占位符原样发出去）。
-             "const body = tpl ? TPL(tpl, date, mode, since)",
+             "const renderRound = (tpl, date, reason, since, mode)",
              # （`linkProfileIntoAgent` / `DSH_CHAT_FEED_LOCAL` 在 lib/plugin.js 里，不在 host body 里 ——
              #   那个文件由 `npm run check` 的 node --check 覆盖。）
              "wakeText: slim ? '' : TPL(WAKE_TEXT)",
@@ -252,7 +252,11 @@ for frag in ("const DIR =", "const WAKE_TEXT =", "apply(ctx)",
              #   私人 `round.md` 里那句写死的"本轮是自动/补跑触发的，绝对不许提问"被每一轮用上 ⇒
              #   手动轮也被当成自动轮；而"自动轮禁问"的判据住在可被覆盖的私人文本里（换掉就丢规则）。
              "【提问规则·代码注入】", "只有这种轮允许提问",
-             "const body = tpl ? TPL(tpl, date, mode, since)", "return TPL(body + ask, date, mode, since)"):
+             # A68：提示词在**发车那一刻**从磁盘读（改提示词不必再重启宿主）
+             "const renderRound = (tpl, date, reason, since, mode)", "const readPromptNow = async (name, privateSide)",
+             "const roundPromptLive = async (date, reason, since, mode)", "await roundPromptLive(date, reason,",
+             "const body = (typeof tpl === 'string' && tpl) ? TPL(tpl, date, mode, since)",
+             "return TPL(body + ask, date, mode, since)"):
     check("片段仍在: %s" % frag, frag in body)
 
 with io.open(CHK, "w", encoding="utf-8", newline="\n") as f:
