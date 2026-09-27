@@ -16,8 +16,9 @@ function localDir() {
   const appdata = process.env.LOCALAPPDATA
     || (process.env.USERPROFILE ? path.join(process.env.USERPROFILE, 'AppData', 'Local') : '');
   const cands = [];
-  if (appdata) cands.push(path.join(appdata, 'dsh-chat-digest'));   // A36：缺省＝插件自己的私人文件夹
-  cands.push(path.join(HERE, '..', 'local'), path.join(HERE, 'local'));
+  cands.push(path.join(HERE, '..', 'local'));                       // A38：插件目录下的 local/（可见入口）
+  if (appdata) cands.push(path.join(appdata, 'dsh-chat-digest'));   // 包外真身
+  cands.push(path.join(HERE, 'local'));
   for (const c of cands) {
     if (fs.existsSync(c)) return c;
   }

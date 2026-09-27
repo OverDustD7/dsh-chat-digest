@@ -37,7 +37,7 @@ def group_of(body):
 
     2026-09-15 修 bug：`load_units_corpus` 原来把**所有**方括号内容都当"已筛群名"，
     于是 `[问]`/`[答]`/`[卡片]` 这些标记也算群名 → **含这些标记的其他群的行被误排除**出语料
-    （实测 09-14：分片少了 59 行，全是带 `[问]/[答]` 的行，含***REMOVED***群那条）。
+    （实测 09-14：分片少了 59 行，全是带 `[问]/[答]` 的行，含某任课老师群那条）。
     自检工具：`python tools\\check_corpus_coverage.py <date>`。
     """
     m = LEAD_BRACKETS.match(body)

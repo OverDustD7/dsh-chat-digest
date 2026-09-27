@@ -165,7 +165,7 @@ never reach the repository or the npm tarball.
 - State only, under `stateDir`: `state.json` (atomic write, a `.bak` copy, and a `.corrupt-<ts>` quarantine
   when a file fails to parse) and `panel.json`. Nothing is written inside `node_modules`, and no file of
   yours is modified. A bad state file is never deleted.
-- Legacy state locations (`%LOCALAPPDATA%\chat-feed\`, `%TEMP%\chat-feed\`, `%TEMP%\dsh-chat-digest\`) are
+- Legacy state locations (`%LOCALAPPDATA%\chat-feed\`, `<旧临时目录>\`, `%TEMP%\dsh-chat-digest\`) are
   read once as migration sources, then left in place.
 - A round costs that route's tokens: it reads your chats and rewrites the panel. There is no other cost, and
   no telemetry.

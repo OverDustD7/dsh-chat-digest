@@ -31,12 +31,14 @@ def local_dir():
     if d and os.path.isdir(d):
         return d
     here = os.path.dirname(os.path.abspath(__file__))
-    cands = []
+    # A38：顺序＝插件目录下的 local/（可见入口，通常是运行时联接）→ 包外真身 → 包旁/包内 local/
+    pkg = os.path.dirname(here)
     appdata = os.environ.get("LOCALAPPDATA") or os.path.join(
         os.environ.get("USERPROFILE") or "C:", "AppData", "Local")
+    cands = [os.path.join(pkg, "local")]
     if appdata:
         cands.append(os.path.join(appdata, "dsh-chat-digest"))
-    cands += [os.path.join(os.path.dirname(here), "local"), os.path.join(here, "local")]
+    cands.append(os.path.join(here, "local"))
     for cand in cands:
         if os.path.isdir(cand):
             return cand
