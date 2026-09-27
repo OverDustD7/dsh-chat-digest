@@ -36,7 +36,7 @@
 [docs/agent/cf_api.py](docs/agent/cf_api.py) 虽在 docs 下，却是活的 HTTP 客户端，不能当纯文档移动。
 [scripts/find_attachments.py](agent 根/scripts/find_attachments.py) 有明确缺陷且未接 daily_prep；不能因文件存在声称附件线已通。
 
-Python 使用 `D:\Project\DSH\agent\venv\Scripts\python.exe`。真实 output 数据、knowledge 和文档镜像本次都未移动；output 不在 git，需要独立备份策略。
+Python 用**插件配置里的 `python`**（`pipeline.yaml:python`；缺省＝PATH 里的 `python`）。真实 output 数据、knowledge 和文档镜像本次都未移动；output 不在 git，需要独立备份策略。
 
 ## 历史与归档
 

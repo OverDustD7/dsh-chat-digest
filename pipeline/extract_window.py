@@ -13,17 +13,17 @@ Outputs:
 import os as _os
 import sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
-from pconf import C  # noqa: E402
+from pconf import (C, agent_root, scripts_dir, work_dir, python_exe, external_tool, out_dir)  # noqa: E402
 
 WX_ACCOUNT_DIR = C.get("wx_account_dir")
 WX_MSG_GLOB = C.get("wx_msg_glob")
 WX_KEY_DIR = C.get("wx_key_dir")
 QQ_DATA_DIR = C.get("qq_data_dir")
-WORK_DIR = C.get("work_dir")
+WORK_DIR = work_dir()
 SELF_WXID = C.get("self_wxid")
 MAIN_GROUP = C.get("main_group")
 
-OUT_DIR = C.get("output_dir")
+OUT_DIR = out_dir()
 GROUPS = C.groups
 # ────────────────────────────────────────────────────────────────────────────
 import base64
@@ -40,11 +40,11 @@ import zstandard as zstd
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-OUTDIR = os.path.join(os.path.dirname(HERE), "output", "window")
-QQEXP = os.path.join(os.path.dirname(HERE), "output", "qq", "nt_msg_export.db")
-QQRAW = os.path.join(os.path.dirname(HERE), "output", "qq", "raw")
-WXOUT = os.path.join(os.path.dirname(HERE), "output", "wx")
+HERE = agent_root()
+OUTDIR = os.path.join(HERE, "output", "window")
+QQEXP = os.path.join(HERE, "output", "qq", "nt_msg_export.db")
+QQRAW = os.path.join(HERE, "output", "qq", "raw")
+WXOUT = os.path.join(HERE, "output", "wx")
 SELF_WX = SELF_WXID
 
 TZ = dt.timezone(dt.timedelta(hours=8))

@@ -11,17 +11,17 @@
 import os as _os
 import sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
-from pconf import C  # noqa: E402
+from pconf import (C, agent_root, scripts_dir, work_dir, python_exe, external_tool, out_dir)  # noqa: E402
 
 WX_ACCOUNT_DIR = C.get("wx_account_dir")
 WX_MSG_GLOB = C.get("wx_msg_glob")
 WX_KEY_DIR = C.get("wx_key_dir")
 QQ_DATA_DIR = C.get("qq_data_dir")
-WORK_DIR = C.get("work_dir")
+WORK_DIR = work_dir()
 SELF_WXID = C.get("self_wxid")
 MAIN_GROUP = C.get("main_group")
 
-OUT_DIR = C.get("output_dir")
+OUT_DIR = out_dir()
 GROUPS = C.groups
 # ────────────────────────────────────────────────────────────────────────────
 import os
@@ -29,7 +29,7 @@ import shutil
 import sys
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+HERE = agent_root()
 APPLY = "--apply" in sys.argv
 
 # 保留在 scripts\ 的正式脚本（其余 .py/.mjs 归入 scripts\archive\）
@@ -57,7 +57,7 @@ SKIP_DIRS = {"images", "articles", "archive", "wx", "qq", "days", "daily", "back
 
 
 def plan_scripts():
-    src = os.path.join(HERE, "scripts")
+    src = scripts_dir()
     dst = os.path.join(src, "archive")
     moves = []
     for f in sorted(os.listdir(src)):

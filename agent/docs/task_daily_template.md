@@ -42,7 +42,7 @@
 
 ## 2. 数据获取（**主 agent 已经跑完，你直接用产物**；只有任务书明确写"你自己跑"时才执行下面命令）
 > 命令留在这里备查（**不是让你默认就跑**）：
-（在 `scripts` 目录，用 `..\..\venv\Scripts\python.exe`）
+（在 `pipeline/` 目录，用 `python`）
 1. `wx_decrypt3.py <微信key>` + `wx_decrypt_more.py <微信key>` —— 解密微信全部库（含 `biz_message_0` 公众号、`favorite` 收藏）
 2. `qq_decrypt_hex.py <QQkey> "<nt_msg.db>" "output/qq/nt_msg_plain.db"` → `nt_msg_db_util\3.export.py` —— QQ 解密+导出
 3. `extract_day.py <DATE>` → `output/days/<DATE>.jsonl`

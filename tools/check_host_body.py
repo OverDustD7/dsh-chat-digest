@@ -219,6 +219,8 @@ for frag in ("const DIR =", "const WAKE_TEXT =", "apply(ctx)",
              #   丢了这两条，通用提示词又会退回"写死某个人的目录"，别人装完还是跑不起来。
              "const TPL = (s, date, mode)", "{pkg}", "{agent}", "{profile}", "{py}",
              "const AGENT_ROOT",
+             # A35（2026-09-27）：round 提示词也走 TPL（原来只换 date/mode/inbox，17 个路径占位符原样发出去）。
+             "if (tpl) return TPL(tpl, date, mode)",
              # （`linkProfileIntoAgent` / `DSH_CHAT_FEED_LOCAL` 在 lib/plugin.js 里，不在 host body 里 ——
              #   那个文件由 `npm run check` 的 node --check 覆盖。）
              "wakeText: slim ? '' : TPL(WAKE_TEXT)"):

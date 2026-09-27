@@ -27,10 +27,11 @@ import sys
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT_PIPE = os.path.join(os.path.dirname(ROOT), "pipeline")   # A35：取数脚本在 <插件目录>/pipeline（原来指 <agent 根>/scripts，A34 后那里不存在）
 
 # 只扫"会被当成现状读"的文件（相对 ROOT）。历史/日志类一律不扫。
 LIVE = [
-    os.path.join("scripts", "daily_prep.py"),
+    os.path.join("pipeline", "daily_prep.py"),
     os.path.join("docs", "MAIN_AGENT_SPEC.md"),
     os.path.join("docs", "agent", "WORKING.md"),
     os.path.join("docs", "INDEX.md"),
@@ -69,7 +70,7 @@ def count_run_calls():
     别用 `run\\(` 裸数 —— 会多算 `def run(`、`subprocess.run(`（虽然负向断言能挡掉这个）和
     docstring 里那句 `run(...)`（2026-09-15 实测：裸数得 23，真值 21）。
     """
-    src = open(os.path.join(ROOT, "scripts", "daily_prep.py"), encoding="utf-8").read()
+    src = open(os.path.join(ROOT_PIPE, "daily_prep.py"), encoding="utf-8").read()
     return len(re.findall(r"(?:steps\.append\(|=)\s*run\(", src))
 
 

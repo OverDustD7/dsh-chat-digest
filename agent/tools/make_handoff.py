@@ -18,6 +18,7 @@ import datetime as dt
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # agent 根
 CI = ROOT
+CI_PIPE = os.path.join(os.path.dirname(CI), "pipeline")   # A35：取数脚本在 <插件目录>/pipeline（原来指 <agent 根>/scripts，A34 后那里不存在）
 CF = os.path.join(ROOT, "chat-feed")
 TZ = dt.timezone(dt.timedelta(hours=8))
 FORCE = "--force" in sys.argv
@@ -62,7 +63,7 @@ try:
 except Exception as e:
     F["err"] = str(e)[:120]
 
-dp = os.path.join(CI, "scripts", "daily_prep.py")
+dp = os.path.join(CI_PIPE, "daily_prep.py")
 t = io.open(dp, encoding="utf-8").read()
 F["steps"] = len(re.findall(r'run\("', t))
 F["stepNames"] = re.findall(r'run\("([^"]+)"', t)

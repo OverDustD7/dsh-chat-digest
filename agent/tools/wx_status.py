@@ -31,7 +31,8 @@ import sys
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.join(ROOT, "scripts"))
+ROOT_PIPE = os.path.join(os.path.dirname(ROOT), "pipeline")   # A35：取数脚本在 <插件目录>/pipeline（原来指 <agent 根>/scripts，A34 后那里不存在）
+sys.path.insert(0, os.path.join(ROOT_PIPE))
 CST = datetime.timezone(datetime.timedelta(hours=8))
 OUT_J = os.path.join(ROOT, "output", "logs", "_wx_status.json")
 

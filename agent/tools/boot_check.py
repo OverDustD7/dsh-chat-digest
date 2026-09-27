@@ -25,6 +25,7 @@ import re
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT_PIPE = os.path.join(os.path.dirname(ROOT), "pipeline")   # A35：取数脚本在 <插件目录>/pipeline（原来指 <agent 根>/scripts，A34 后那里不存在）
 CF_API_DIR = os.path.join(ROOT, "docs", "agent")
 CST = datetime.timezone(datetime.timedelta(hours=8))
 
@@ -109,7 +110,7 @@ def main():
 
     section("微信 / 图片线")
     try:
-        scripts = os.path.join(ROOT, "scripts")
+        scripts = os.path.join(ROOT_PIPE)
         if scripts not in sys.path:
             sys.path.insert(0, scripts)
         import wx_images as W  # noqa: PLC0415

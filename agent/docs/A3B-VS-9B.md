@@ -54,12 +54,12 @@ A3B 在 09-14 同样多找出：**决赛抽签（当日 20:00 前）**、*****RE
 
 ```powershell
 # 9B
-..\venv\Scripts\python.exe tools\local_prepass.py 2026-09-16 --model qwen3.5:9b --tag 9b
+python tools\local_prepass.py 2026-09-16 --model qwen3.5:9b --tag 9b
 # A3B
-..\venv\Scripts\python.exe tools\local_prepass.py 2026-09-16 --model qwen3.6:35b-a3b --tag a3b
+python tools\local_prepass.py 2026-09-16 --model qwen3.6:35b-a3b --tag a3b
 # 只补跑某块（其余块读缓存，产物仍完整）
-..\venv\Scripts\python.exe tools\local_prepass.py 2026-09-16 --redo 14
+python tools\local_prepass.py 2026-09-16 --redo 14
 # 自检（含"疑似跑飞"与锚点真实性）
-..\venv\Scripts\python.exe tools\prepass_audit.py 2026-09-16
+python tools\prepass_audit.py 2026-09-16
 ```
 （跑 A3B 前建议 `ollama stop qwen3.5:9b` 腾显存；实测 16 GB 卡上 9.3 GB 占用时仍能跑。）

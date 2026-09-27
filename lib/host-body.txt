@@ -1136,8 +1136,7 @@ const ROUND_GENERIC = (date, mode) => [
   "4) **回报**：读到了什么、写了哪几条、哪些没做成。",
 ].join('\n');const roundPrompt = (date, reason, since, mode) => {
   const tpl = (typeof CF.roundText === 'string' && CF.roundText) ? CF.roundText : '';
-  if (tpl) return tpl.replace(/\{date\}/g, date).replace(/\{mode\}/g, String(mode || ''))
-    .replace(/\{inbox\}/g, INBOX_DIR);
+  if (tpl) return TPL(tpl, date, mode);   // A35：走 TPL，{agent}/{pkg}/{profile}/{py} 与 {date}/{mode}/{inbox} 一起渲染
   return ROUND_GENERIC(date, mode);
 };
 
