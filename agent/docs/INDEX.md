@@ -1,7 +1,7 @@
 # agent 当前文档与工具索引
 
-更新：2026-09-20。总入口：[CHAT-INTELLIGENCE.md](D:/Project/DSH/chat-feed/README.md)。
-最新状态先看 [全量检查报告](D:/Project/DSH/chat-feed/docs/audit-2026-09-20/REPORT.md)，文件位置看 [结构说明](D:/Project/DSH/chat-feed/docs/audit-2026-09-20/FILE-STRUCTURE.md) / [逐文件登记](D:/Project/DSH/chat-feed/docs/audit-2026-09-20/FILE-REGISTRY.md)。
+更新：2026-09-20。总入口：[CHAT-INTELLIGENCE.md](<旧工作区>/…)。
+最新状态先看 [全量检查报告](<旧工作区>/…)，文件位置看 [结构说明](<旧工作区>/…) / [逐文件登记](<旧工作区>/…)。
 
 ## 规范的用途
 
@@ -42,4 +42,4 @@ Python 用**插件配置里的 `python`**（`pipeline.yaml:python`；缺省＝PA
 
 本次归档 94 个历史补丁/备份/临时文件到 `agent/archive/2026-09-20/`。旧 scripts/archive、docs/archive 保留。根目录历史交接和 output/logs 中的排障脚本也保留；不自动把“未进 git”当作无用。
 
-原版 INDEX：[历史副本](D:/Project/DSH/chat-feed/docs/audit-2026-09-20/previous-docs/agent-INDEX.md)。新需求、代码和验收结果请用检查报告 A01–A18 编号对齐，避免继续只堆“已修”的时间线。
+原版 INDEX：[历史副本](<旧工作区>/…)。新需求、代码和验收结果请用检查报告 A01–A18 编号对齐，避免继续只堆“已修”的时间线。
