@@ -35,7 +35,11 @@ def local_dir():
     pkg = os.path.dirname(here)
     appdata = os.environ.get("LOCALAPPDATA") or os.path.join(
         os.environ.get("USERPROFILE") or "C:", "AppData", "Local")
+    home = os.environ.get("DSH_HOME") or os.path.join(
+        os.environ.get("USERPROFILE") or "C:", ".dsh")
     cands = [os.path.join(pkg, "local")]
+    if home:
+        cands.append(os.path.join(home, "dsh-chat-digest"))   # A40：<DSH_HOME>/dsh-chat-digest
     if appdata:
         cands.append(os.path.join(appdata, "dsh-chat-digest"))
     cands.append(os.path.join(here, "local"))

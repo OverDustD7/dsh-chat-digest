@@ -17,7 +17,9 @@ function localDir() {
     || (process.env.USERPROFILE ? path.join(process.env.USERPROFILE, 'AppData', 'Local') : '');
   const cands = [];
   cands.push(path.join(HERE, '..', 'local'));                       // A38：插件目录下的 local/（可见入口）
-  if (appdata) cands.push(path.join(appdata, 'dsh-chat-digest'));   // 包外真身
+  const home = process.env.DSH_HOME || (process.env.USERPROFILE ? path.join(process.env.USERPROFILE, '.dsh') : '');
+  if (home) cands.push(path.join(home, 'dsh-chat-digest'));         // A40：真身
+  if (appdata) cands.push(path.join(appdata, 'dsh-chat-digest'));   // 旧位置兜底
   cands.push(path.join(HERE, 'local'));
   for (const c of cands) {
     if (fs.existsSync(c)) return c;

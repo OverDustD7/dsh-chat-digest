@@ -8,6 +8,7 @@
     "lib",
     "pipeline",
     "agent",
+    "prompt",
     "examples",
     "cordis.patch.yml",
     "README.md",

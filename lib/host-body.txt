@@ -19,7 +19,10 @@ const API = '/chat-feed/api/';
 //: 进程环境（别把用户名写死）：%LOCALAPPDATA% 是 Windows 的持久应用数据根，%TEMP% 是旧位置。
 const ENV = (typeof process !== 'undefined' && process && process.env) ? process.env : {};
 const STATE_DIR = (typeof CF.stateDir === 'string' && CF.stateDir) ? CF.stateDir
-  : ((ENV.LOCALAPPDATA || ((ENV.USERPROFILE || 'C:') + '\\AppData\\Local')) + '\\dsh-chat-digest');
+  // A40（2026-09-27）：缺省先看**私人 profile**（CF.localDir，即插件目录下的 local/）——
+  //   面板状态也是私人数据，跟提示词/产物住一起，而不是散在 %LOCALAPPDATA%。
+  : ((typeof CF.localDir === 'string' && CF.localDir) ? CF.localDir
+  : ((ENV.LOCALAPPDATA || ((ENV.USERPROFILE || 'C:') + '\\AppData\\Local')) + '\\dsh-chat-digest'));
 const STATE_FILE = STATE_DIR + '\\state.json';
 //: 旧位置：**只读、只用于一次性迁移**，任何时候都不删。本插件**改过名**（chat-feed → dsh-chat-digest），
 //:   所以候选有三个，按顺序试：
