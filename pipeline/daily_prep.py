@@ -30,7 +30,7 @@
 import os as _os
 import sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
-from pconf import (C, agent_root, scripts_dir, work_dir, python_exe, external_tool, out_dir)  # noqa: E402
+from pconf import (C, agent_root, pkg_dir, scripts_dir, work_dir, python_exe, external_tool, out_dir)  # noqa: E402
 
 WX_ACCOUNT_DIR = C.get("wx_account_dir")
 WX_MSG_GLOB = C.get("wx_msg_glob")
@@ -56,6 +56,7 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 TZ = dt.timezone(dt.timedelta(hours=8))
 HERE = agent_root()   # 工作区
 SCRIPTS = scripts_dir()
+TOOLS = os.path.join(pkg_dir(), "agent", "tools")
 VENV_PY = python_exe()
 NT_UTIL = external_tool("nt_msg_db_util", "3.export.py")
 
@@ -249,9 +250,23 @@ def run(label, argv, check_paths=(), check_lines=(0, None), timeout=1800, status
       被 `check_lines=(1,None)` 记成 CHECK-FAILED。
     """
     t0 = time.time()
+    # A65（2026-09-27 实测）：**每一步的 cwd 必须是"可写的私人根"，不能是包内 `pipeline\`**。
+    #   现场：同一份代码、同一条管线，主 agent 在 workspace-write 沙箱里跑时「1-微信DB解密」
+    #   与「7-容量扫描」exit=1（0.4 s），而在这台机器上无沙箱跑整条是 `整体：ok / 退出码 0`
+    #   ⇒ 差别只在运行环境：**包内脚本目录对会话是只读的**，脚本里任何相对路径、或往包内写的动作
+    #   都会被沙箱拒。改 cwd＝`out_dir()`（私人根，一定在可写边界内）；裸脚本名同时解析成绝对路径，
+    #   所以改 cwd 不影响脚本定位，也不影响 `check_paths`（它本来就按 `HERE` 解析）。
+    work = out_dir()
+    try:
+        os.makedirs(work, exist_ok=True)
+    except OSError:
+        work = SCRIPTS
+    argv = list(argv)
+    if len(argv) > 1 and not os.path.isabs(argv[1]):
+        argv[1] = os.path.join(SCRIPTS, argv[1])
     print("\n=== [%s] %s" % (label, " ".join(os.path.basename(a) for a in argv)))
     try:
-        p = subprocess.run(argv, cwd=SCRIPTS, capture_output=True, text=True,
+        p = subprocess.run(argv, cwd=work, capture_output=True, text=True,
                            encoding="utf-8", errors="replace", timeout=timeout)
         tail = (p.stdout or "").strip().splitlines()[-4:]
         for line in tail:
@@ -341,12 +356,12 @@ def main():
     #   就被判 CHECK-FAILED —— 小样本日被误标失败。现在门槛降到"至少 1 行"，
     #   "每个群都进了语料"由 `3i-b-语料覆盖自检`（按来源覆盖，不按行数）负责；
     #   真正 0 行时记 `empty`（合法空状态），不是失败。
-    steps.append(run("3d-跨会话时间轴", [VENV_PY, os.path.join(HERE, "tools", "day_timeline.py"), date],
+    steps.append(run("3d-跨会话时间轴", [VENV_PY, os.path.join(TOOLS, "day_timeline.py"), date],
                      ["output/days/%s_timeline.md" % date], check_lines=(1, None),
                      critical=True, empty_ok=True))
-    steps.append(run("3e-文章卡片清单(含本地正文对照)", [VENV_PY, os.path.join(HERE, "tools", "day_articles.py"), date],
+    steps.append(run("3e-文章卡片清单(含本地正文对照)", [VENV_PY, os.path.join(TOOLS, "day_articles.py"), date],
                      ["output/days/%s_articles.md" % date], check_lines=(1, None), critical=False))
-    steps.append(run("3f-主题跨天回溯", [VENV_PY, os.path.join(HERE, "tools", "day_threads.py"), date, "3"],
+    steps.append(run("3f-主题跨天回溯", [VENV_PY, os.path.join(TOOLS, "day_threads.py"), date, "3"],
                      ["output/days/%s_threads.md" % date], check_lines=(1, None), empty_ok=True))
     # 3h：官网/公众号当日新文章（2026-09-14 新增）
     #   为什么要有这一步：wx_biz.py（3c）只读**本地微信库** → 只覆盖"他关注的号"；
@@ -356,7 +371,7 @@ def main():
     # 3g：话语单元化（2026-09-14）—— 机械降噪：连续发言折叠 + 复读合并 + 全局去重 + 清垃圾
     #   顺带修掉一个数据质量 bug：QQ 原始媒体 JSON 与 [图片:hash] 占位文本会当成"正文"混进来
     #   （实测 09-13 大群 146,800 → 49,990 字符，-66%）。主 agent 提炼时读这个而不是原始行。
-    steps.append(run("3g-话语单元化(降噪)", [VENV_PY, os.path.join(HERE, "tools", "units_day.py"), date],
+    steps.append(run("3g-话语单元化(降噪)", [VENV_PY, os.path.join(TOOLS, "units_day.py"), date],
                      ["output/days/%s_units.md" % date], check_lines=(1, None),
                      critical=True, empty_ok=True))
     steps.append(run("3h-官网/公众号当日新文章", ["node", os.path.join(SCRIPTS, "day_web_articles.mjs"), date],
@@ -365,7 +380,7 @@ def main():
     #   实测（09-13 大群随机 200 条）：丢 73.0%、字符 -70.2%、rescued 7、fail-open 0、2.9 秒；
     #   漏率约 5%（人工抽检 45 条）→ 已加白名单兜底（RESCUE）；被丢的原文留在 _units_dropped.md 可回查。
     #   失败/超时一律 fail-open 全留 —— 宁可多留，不许因模型抽风丢信息。
-    steps.append(run("3i-本地小模型过筛", [VENV_PY, os.path.join(HERE, "tools", "llm_filter.py"),
+    steps.append(run("3i-本地小模型过筛", [VENV_PY, os.path.join(TOOLS, "llm_filter.py"),
                                         "--date", date, "--chat", MAIN_GROUP],
                      ["output/days/%s_units_filtered.md" % date], check_lines=(1, None),
                      empty_ok=True, timeout=1200))
@@ -373,20 +388,20 @@ def main():
     #   这条保证"源里每个群都进了语料"，否则"分片全覆盖"名不副实。
     #   立这条的起因：某次作业在语料里却没被报出（层级判断错），查证时发现
     #   split_day 把 `[问]/[答]` 标记当群名，误排除 59 行；现在既有自检也有修复。
-    steps.append(run("3i-b-语料覆盖自检", [VENV_PY, os.path.join(HERE, "tools", "check_corpus_coverage.py"),
+    steps.append(run("3i-b-语料覆盖自检", [VENV_PY, os.path.join(TOOLS, "check_corpus_coverage.py"),
                                         date, "--quiet"],
                      [], timeout=120))
     # 3k：收藏刷新（2026-09-14）—— 收藏是「他关心什么」最硬的信号；
     #   用户这轮要测的链就是「查看我的收藏 → 找教学云盘链接」，而收藏刷新原本**不在管线里**。
     steps.append(run("3k-收藏刷新", [VENV_PY, "favorites.py"],
-                     ["docs/knowledge/collections.md"], check_lines=(1, None), empty_ok=True))
+                     ["knowledge/collections.md"], check_lines=(1, None), empty_ok=True))
     # 3k-b：公众号作者扫描（2026-09-15 用户要求「你每天都该看一眼（别人转发的，自己在网上搜）」）
     #   为什么需要：微信只把**他已关注**号的推送写进本地（biz_articles.jsonl）→ 只看它，能发现的号
     #   永远只有他自己关注的那几个。这一步从 `output/days/*_articles.md` 的文章卡片反解
     #   "**别人转发的文章是谁写的**"（消息正文里的链接是截断的，必须用文章卡片那层），
     #   并标出"值得关注但他还没关注"的候选池；主 agent 每天据此把值得的号补进
     #   `docs/knowledge/official_accounts.md` 第一节，并自己 web_search 再搜一遍。
-    steps.append(run("3k-b-公众号作者扫描", [VENV_PY, os.path.join(HERE, "tools", "biz_authors.py"), "--fetch", "--limit", "20"],
+    steps.append(run("3k-b-公众号作者扫描", [VENV_PY, os.path.join(TOOLS, "biz_authors.py"), "--fetch", "--limit", "20"],
                      ["output/window/biz_authors.md"], check_lines=(1, None), empty_ok=True, timeout=900))
     s4 = run("4-当天图片索引(含wxgf转码)", [VENV_PY, "day_images.py", date],
              ["output/days/%s_images.json" % date],
@@ -414,7 +429,7 @@ def main():
         # 2026-09-20：超时 1200 → **2400 秒**。实测 09-18 有 81 张图时 1200 秒不够（TIMEOUT 后靠手工补跑）；
         #   根因是本地视觉模型在这台机器上跑不满 GPU（16 GB 显存装不下大模型），不是脚本慢。
         #   超时是**可见失败**（报告里带 TIMEOUT），所以这里只放宽余量、不改判据。
-        steps.append(run("3j-图片分诊(本地视觉)", [VENV_PY, os.path.join(HERE, "tools", "vision_triage.py"), date],
+        steps.append(run("3j-图片分诊(本地视觉)", [VENV_PY, os.path.join(TOOLS, "vision_triage.py"), date],
                          ["output/days/%s_vision.md" % date], check_lines=(1, None), empty_ok=True, timeout=2400))
     else:
         steps.append({"step": "3j-图片分诊(本地视觉)", "status": "跳过(%s)" % s4["status"], "seconds": 0.0,
@@ -435,7 +450,7 @@ def main():
     #   **覆盖状态**摆到一张账上 —— 逐条状态 / 只有总数 / 完全没接线，三类分开写。
     #   为什么要有它：A13 的原文说得很准——"反爬、未落盘本身是边界，**静默漏报边界**才是问题"。
     #   放在最后：它要读 3j 的 `_vision.md` 与 4b 的 `_files.json`。可选步骤（缺某类只记 degraded）。
-    steps.append(run("8-媒体覆盖账本", [VENV_PY, os.path.join(HERE, "tools", "media_ledger.py"), date],
+    steps.append(run("8-媒体覆盖账本", [VENV_PY, os.path.join(TOOLS, "media_ledger.py"), date],
                      ["output/days/%s_coverage.md" % date], check_lines=(1, None),
                      critical=False, timeout=300))
 
