@@ -332,7 +332,22 @@ if leaks:
     print('== 结构化隐私候选 ==')
     for rel, kind in leaks:
         print('  %s: %s' % (rel, kind))
-ok = not struct and not h1 and not repo_hits and not extra_in_pkg and not leaks
+# ── 3.5) 布局边界探针（B01–B06，2026-09-27 A65 那批断言）─────────────────────────
+#   它们检查的是"拆分布局抽掉的那几个隐式前提"：可写 cwd、私人根白名单、包内不许有字面路径等。
+#   这些断言读的是**本机的私人 profile**，所以：本机有就跑、并计入判定；第三方机器上没有这个文件就跳过，
+#   不该因为私人夹长什么样而卡住别人发布。
+_bound = os.path.join(R, 'test', 'boundary-checks.py')
+bound = True
+print('\n== 布局边界探针（B01–B06）==')
+if os.path.isfile(_bound):
+    _rc, _out, _err = run([sys.executable, _bound])
+    for _l in [x for x in ((_out or '') + (_err or '')).split('\n') if x.strip()][-9:]:
+        print('  ' + _l.strip())
+    bound = (_rc == 0)
+else:
+    print('  本机没有 test/boundary-checks.py，跳过（不影响判定）')
+
+ok = bound and not struct and not h1 and not repo_hits and not extra_in_pkg and not leaks
 print()
 print('门禁判定：%s' % ('通过 ✔' if ok else '**未过，拒绝发布**'))
 
