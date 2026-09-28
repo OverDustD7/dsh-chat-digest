@@ -332,22 +332,32 @@ if leaks:
     print('== 结构化隐私候选 ==')
     for rel, kind in leaks:
         print('  %s: %s' % (rel, kind))
-# ── 3.5) 布局边界探针（B01–B06，2026-09-27 A65 那批断言）─────────────────────────
-#   它们检查的是"拆分布局抽掉的那几个隐式前提"：可写 cwd、私人根白名单、包内不许有字面路径等。
-#   这些断言读的是**本机的私人 profile**，所以：本机有就跑、并计入判定；第三方机器上没有这个文件就跳过，
-#   不该因为私人夹长什么样而卡住别人发布。
+# ── 3.5) 布局边界探针（B01–B06）────────────────────────────────────────────────
+#   分两挡（2026-09-28 用户定案）：**B01「包内不许有本机字面路径」判的是产物 ⇒ 计入阻断**；
+#   B02–B06 判的是**本机部署**（它们读的是安装副本与私人 profile 的现状）⇒ 只打印报数，不卡发布 ——
+#   否则"这台机器没同步"会被当成"产物不合格"。本机没有这个文件时整段跳过。
 _bound = os.path.join(R, 'test', 'boundary-checks.py')
-bound = True
-print('\n== 布局边界探针（B01–B06）==')
+b01_ok = True
+print('\n== 布局边界探针（B01–B06；B01 阻断，B02–B06 报数）==')
 if os.path.isfile(_bound):
     _rc, _out, _err = run([sys.executable, _bound])
-    for _l in [x for x in ((_out or '') + (_err or '')).split('\n') if x.strip()][-9:]:
+    _lines = [x.rstrip() for x in ((_out or '') + (_err or '')).split('\n')
+              if re.match(r'\s*(ok|FAIL)\s+B\d\d', x)]
+    for _l in _lines:
         print('  ' + _l.strip())
-    bound = (_rc == 0)
+    _b01 = [x for x in _lines if 'B01' in x]
+    if _b01:
+        b01_ok = not any(x.strip().startswith('FAIL') for x in _b01)
+    else:
+        b01_ok = (_rc == 0)   # 解析不到结果（探针崩了）⇒ 按不过处理
+        print('  探针没给出可解析的 B01 结果，按不过处理（rc=%s）' % _rc)
+    _bad = [x.split()[1] for x in _lines if x.strip().startswith('FAIL')]
+    if _bad:
+        print('  （报数·不卡发布）这几条判的是**本机部署**：%s' % ', '.join(_bad))
 else:
-    print('  本机没有 test/boundary-checks.py，跳过（不影响判定）')
+    print('  本机没有 test/boundary-checks.py，整段跳过（不影响判定）')
 
-ok = bound and not struct and not h1 and not repo_hits and not extra_in_pkg and not leaks
+ok = b01_ok and not struct and not h1 and not repo_hits and not extra_in_pkg and not leaks
 print()
 print('门禁判定：%s' % ('通过 ✔' if ok else '**未过，拒绝发布**'))
 
