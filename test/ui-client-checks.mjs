@@ -98,12 +98,16 @@ rec('C12_ui_restores_the_more_button_idempotently',
 rec('C13_cleanup_only_removes_our_own_row',
   /entryRow\.getAttribute\(ENT_ATTR\) !== null\) entryRow\.parentNode\.removeChild/.test(ui),
   'cleanup 不会删掉壳渲染的那一行')
-// 壳的面板列表是带 gap 的 flex 列：折叠区那个 0 高度的盒子也白占一个 gap（用户报「巨大缝隙」）。
+// 壳的面板列表是带 gap 的 flex 列：折叠区那个 0 高度的盒子也白占一个 gap（用户报「巨大缝隙」）；
+// 展开时父列的 row-gap 会在它上下各留一次 ⇒ 还要用负 margin 抵掉，才能贴住入口行。
 rec('C14_collapsed_expander_leaves_no_flex_gap_in_shell_mode',
   ui.includes('function syncAccDisplay()')
   && ui.includes("accEl.style.display = 'none'")
-  && ui.includes("if (!shellMode()) { accEl.style.display = ''; return }"),
+  && ui.includes("if (!shellMode()) { accEl.style.display = ''; accEl.style.marginTop = ''; accEl.style.marginBottom = ''; return }"),
   '折叠时摘出布局；非壳模式一字未改')
+rec('C16_expander_compensates_parent_row_gap',
+  ui.includes('function parentRowGap()') && ui.includes('accEl.style.marginTop = neg')
+  && ui.includes('accEl.style.marginBottom = neg'), '用父列 row-gap 的负 margin 贴住入口行')
 rec('C15_close_keeps_the_transition_then_drops_the_box',
   ui.includes('accCloseTimer')
   && /setTimeout\(function \(\) \{ accCloseTimer = null; syncAccDisplay\(\) \}, 320\)/.test(ui),
