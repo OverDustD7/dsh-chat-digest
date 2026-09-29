@@ -56,10 +56,28 @@ rec('C03_inject_covers_slots_and_layout',
 
 // ── apply()：注册、置标志、清旧行 ───────────────────────────────────────────────
 const regs = []
+// 桥用的假服务（形状照壳：`sessions.list.getSnapshot()` 有 ids/byId，行上有 retainedBy.mainView）。
+const openedSessions = []
+const sessionsSnap = {
+  phase: 'ready',
+  ids: ['s-other', 's-user', 's-archived'],
+  byId: {
+    's-other': { id: 's-other', retainedBy: {} },
+    's-user': { id: 's-user', retainedBy: { mainView: 1 } },
+    's-archived': { id: 's-archived', retainedBy: {} },
+  },
+}
 const ctx = {
   slots: { inject(seat, cb) { cb(); return () => {} }, register(options, component) { regs.push({ options, component }); return () => {} } },
   layout: { selectPanel() {} },
   effect(fn) { fn(); return () => {} },
+  // 服务只在**调用时**取（写进 inject 会让 apply pending ⇒ 侧栏那一行消失，这是 2026-09-29 踩过的坑）。
+  get(name) {
+    if (name === 'sessions') return { list: { getSnapshot: () => sessionsSnap } }
+    if (name === 'workspaces') return { list: { getSnapshot: () => ({ archivedSessionIds: ['s-archived'] }) } }
+    if (name === 'uiWorkspace') return { openSession(id) { openedSessions.push(id) } }
+    return undefined
+  },
 }
 if (mod) mod.apply(ctx)
 const row = regs.find((r) => r.options && r.options.name === 'sidebar.panellist')
@@ -81,6 +99,18 @@ glyph.props.onClick({ preventDefault() { prevented++ }, stopPropagation() { stop
 rec('C08_glyph_click_uses_legacy_panel_and_stops_bubble',
   stopped === 1 && prevented === 1 && opened === 1,
   'stopPropagation=' + stopped + ' preventDefault=' + prevented + ' openPanel=' + opened)
+
+// ── 会话导航桥（#95）：ui.js 的「返回」在"目标那一行没渲染"时靠它按 id 回去 ──────────
+const nav = win.__cfwNav
+rec('C20_nav_bridge_reads_current_session_and_refuses_dead_ids',
+  !!nav && nav.current() === 's-user'
+  && nav.ok('s-user') === true && nav.ok('s-archived') === false && nav.ok('nope') === false && nav.ok('') === false,
+  nav ? 'current=' + nav.current() + ' ok(s-user)=' + nav.ok('s-user') + ' ok(已归档)=' + nav.ok('s-archived') : '没有 window.__cfwNav')
+rec('C21_nav_bridge_opens_by_id_and_stays_out_of_inject',
+  !!nav && mod.inject.indexOf('sessions') < 0 && mod.inject.indexOf('uiWorkspace') < 0
+  && src.includes('ctx.get(name)')
+  && nav.open('s-user') === true && openedSessions.join(',') === 's-user' && nav.open('') === false,
+  (nav ? 'openSession=' + JSON.stringify(openedSessions) : '没有 window.__cfwNav') + ' inject=' + JSON.stringify(mod.inject))
 
 // ── 静态面：ui.js 的口子与"壳给了行就别自己插" ────────────────────────────────
 const ui = fs.readFileSync(path.join(PKG, 'lib', 'ui.js'), 'utf8')
@@ -123,8 +153,7 @@ rec('C17_expander_aligns_by_parent_row_boxes_not_its_own_rect',
 // 「新会话」按钮，**点下去会新建一个会话**，所以只有"确证进来前是首页"才允许调它；"会话行没渲染出来"
 // （工作区折叠着）看起来也像"没有选中会话"，但它**不是首页** —— 两个信号必须分开，且其余一律保持 6 次重试。
 rec('C18_back_from_home_returns_home_not_stuck_in_agent_session',
-  ui.includes('var prevHadSession = false')
-  && ui.includes('var prevWasHome = false')
+  ui.includes('var prevWasHome = false')
   && ui.includes('newSessionLabel.indexOf(t1) === 0 || t1.indexOf(newSessionLabel) === 0')
   && ui.includes('prevWasHome = true')
   && ui.includes('if (prevWasHome) { goHome(); return }')
@@ -133,6 +162,22 @@ rec('C18_back_from_home_returns_home_not_stuck_in_agent_session',
   && ui.includes('function goHome()')
   && !ui.includes('__cfwBk') && !ui.includes('__cfwSb'),
   '确证是首页才回首页、其余绝不点「新会话」、保持 6 次重试；无埋点')
+// #95（2026-09-29 用户报"返回的逻辑怎么又坏了"的真凶）：还原原来**只**按侧栏标题找那一行，而
+// **工作区收起时 DSH 不渲染它的会话行** ⇒ 找满 6 次也找不到，人被丢在聊天摘要的常驻会话里。
+// 现在 ui.js 优先用壳的 id 导航（不看 DOM），桥由 lib/client.js 提供；取不到就退回标题匹配。
+// ⚠ 首页（新会话）**也**走 id 这条路：真机实测面板开着时点壳的「新会话」按钮**不生效**
+//   （onDocClick 先按 keepNav 把面板关掉，主区仍停在聊天摘要会话里）⇒ 那颗按钮只能当兜底。
+rec('C19_back_uses_session_id_before_title_matching',
+  ui.includes("var prevSessionId = ''")
+  && ui.includes('prevSessionId = navCurrentId()')
+  && ui.includes('if (prevSessionId && navIdOk(prevSessionId) && navOpenId(prevSessionId))')
+  && ui.includes('else restoreByTitle()')
+  && ui.includes('function restoreByTitle()')
+  && ui.indexOf('navIdOk(prevSessionId)') < ui.indexOf('function restoreByTitle()')
+  && ui.indexOf('navIdOk(prevSessionId)') < ui.indexOf('if (prevWasHome) { goHome(); return }')
+  && ui.includes("prevSessionTitle = ''; prevSessionId = ''")
+  && ui.includes('prevSessionId === ownId'),
+  'id 那条路排在标题匹配与 goHome 之前（首页同样先走 id）；keepNav/已在常驻会话时不还原')
 rec('C15_close_keeps_the_transition_then_drops_the_box',
   ui.includes('accCloseTimer')
   && /setTimeout\(function \(\) \{ accCloseTimer = null; syncAccDisplay\(\) \}, 320\)/.test(ui),
@@ -140,6 +185,23 @@ rec('C15_close_keeps_the_transition_then_drops_the_box',
 const body = fs.readFileSync(path.join(PKG, 'lib', 'host-body.txt'), 'utf8')
 rec('C11_host_still_injects_ui_js',
   /indexOf\(SCRIPT_UI\)\s*<\s*0/.test(body), '面板路径没被动过')
+
+// 埋点不许留：不只查具体的几个名字，而是把两半里所有 `__cfw*` 全局**逐一列出来对白名单**。
+// 2026-09-29 教训：我复现「返回回不去」时埋了 `__cfwSb` / `__cfwDbg`，删的时候靠人眼找 ——
+// 改成"新名字不登记就红"，谁再埋点谁负责登记或删掉。
+const CFW_OK = {
+  'lib/ui.js': ['__cfwFetchChat', '__cfwNav', '__cfwOpenSession', '__cfwRight', '__cfwSidebarRow', '__cfwUi', '__cfwWired'],
+  'lib/client.js': ['__cfwNav', '__cfwSidebarRow', '__cfwUi'],
+}
+const stray = []
+for (const [rel, allowed] of Object.entries(CFW_OK)) {
+  const text = fs.readFileSync(path.join(PKG, rel), 'utf8')
+  for (const name of new Set(text.match(/__cfw[A-Za-z0-9_]+/g) || [])) {
+    if (allowed.indexOf(name) < 0) stray.push(rel + ':' + name)
+  }
+}
+rec('C22_no_unregistered_debug_globals', stray.length === 0,
+  stray.length ? '未登记的埋点：' + stray.join(', ') : '两半里的 __cfw* 全在白名单内')
 
 let bad = 0
 for (const r of results) { if (!r.ok) bad++; console.log('%s %-52s %s', r.ok ? 'ok  ' : 'FAIL', r.name, r.detail) }
