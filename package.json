@@ -1,14 +1,9 @@
 {
   "name": "dsh-chat-digest",
-  "version": "1.5.1",
+  "version": "1.5.0",
   "description": "Turn chat logs into a panel list maintained by a resident agent. Includes a zero npm-dependency core and an optional WeChat/QQ ingestion pipeline. Installs as a DSH profile bundle.",
   "type": "module",
   "main": "lib/plugin.js",
-  "exports": {
-    ".": "./lib/plugin.js",
-    "./client": "./lib/client.js",
-    "./package.json": "./package.json"
-  },
   "files": [
     "lib",
     "pipeline",
@@ -34,13 +29,12 @@
     "dsh": ">=0.1.5-rc.1"
   },
   "scripts": {
-    "check": "node --check lib/plugin.js && node --check lib/client.js && node --check lib/ui.js && node --check lib/right.js",
+    "check": "node --check lib/plugin.js && node --check lib/ui.js && node --check lib/right.js",
     "check:body": "python tools/check_host_body.py",
     "test:host": "node test/host-behavior-checks.mjs",
     "test:portability": "node test/portability-checks.mjs",
-    "test:ui": "node test/ui-client-checks.mjs",
     "test:pipeline": "python test/pipeline-behavior-checks.py",
-    "prepack": "npm run check && npm run test:host && npm run test:portability && npm run test:ui"
+    "prepack": "npm run check && npm run test:host && npm run test:portability"
   },
   "repository": {
     "type": "git",
@@ -72,14 +66,6 @@
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
-    },
-    "client": {
-      "platform": "web",
-      "immediately": true,
-      "inject": [
-        "@deepseek-ai/dsh-client-ui-renderer",
-        "@deepseek-ai/dsh-client-ui-layout"
-      ]
     },
     "compatibility": {
       "dsh": ">=0.1.5-rc.1"

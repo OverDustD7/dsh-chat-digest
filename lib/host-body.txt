@@ -2550,11 +2550,9 @@ const roundPromptLive = async (date, reason, since, mode) => {
           try {
             if (typeof html !== 'string') return html;
             let out = html;
-            // 0.1.7-rc.2 起（2026-09-29「dsh 更新了，UI 需要更新」）：
-            //   **ui.js 不再由宿主注入** —— 它改由客户端插件 `lib/client.js` 在 `main` 槽页挂载时按需取
-            //   （`<script src="/chat-feed/ui.js">`，路由照旧在下面注册着）。原因是新壳的侧栏行与
-            //   主区面板都归槽位注册表管，脚本自己插行/抢主列插不进去；注入只会多出一份游离的旧 UI。
-            //   right.js 仍旧注入：它只定义 `window.__cfwRight`，由 ui.js 的 renderPanel() 去 mount。
+            // 顺序：ui.js 先、right.js 后 —— right.js 只负责定义 window.__cfwRight，
+            // ui.js 的 renderPanel() 才是真正 mount 它的地方；反过来会让后加载的脚本把前一份覆盖掉。
+            if (out.indexOf(SCRIPT_UI) < 0) { const tag = '<script src="' + SCRIPT_UI + '" defer></script>'; out = out.indexOf('</body>') >= 0 ? out.replace('</body>', tag + '</body>') : out + tag }
             if (out.indexOf(SCRIPT_RIGHT) < 0) { const tag = '<script src="' + SCRIPT_RIGHT + '" defer></script>'; out = out.indexOf('</body>') >= 0 ? out.replace('</body>', tag + '</body>') : out + tag }
             return out;
           } catch (e) { return html }
