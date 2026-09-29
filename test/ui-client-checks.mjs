@@ -119,14 +119,20 @@ rec('C17_expander_aligns_by_parent_row_boxes_not_its_own_rect',
 // 返回（2026-09-29 用户报「返回的逻辑怎么又坏了」）：首页那行「新会话」**也会**被标 aria-selected=true，
 // 必须排除；否则返回时满侧栏找一个叫"新会话"的 sessionRow，找不到就放弃，人被丢在常驻会话里。
 // 真机实测两个场景：会话→面板→返回 = 回那个会话；首页→面板→返回 = 回首页。
+// 2026-09-29 二改（用户："返回的逻辑怎么又坏了…你什么测试得到的会回原会话的结论"）：`goHome()` 点的是壳的
+// 「新会话」按钮，**点下去会新建一个会话**，所以只有"确证进来前是首页"才允许调它；"会话行没渲染出来"
+// （工作区折叠着）看起来也像"没有选中会话"，但它**不是首页** —— 两个信号必须分开，且其余一律保持 6 次重试。
 rec('C18_back_from_home_returns_home_not_stuck_in_agent_session',
   ui.includes('var prevHadSession = false')
+  && ui.includes('var prevWasHome = false')
   && ui.includes('newSessionLabel.indexOf(t1) === 0 || t1.indexOf(newSessionLabel) === 0')
-  && ui.includes('var maxTries = prevHadSession ? 6 : 2')
-  && ui.includes('else if (!prevHadSession) goHome()')
+  && ui.includes('prevWasHome = true')
+  && ui.includes('if (prevWasHome) { goHome(); return }')
+  && ui.includes("if (!prevSessionTitle || prevSessionTitle.indexOf('主 Agent') >= 0) return")
+  && ui.includes('var maxTries = 6')
   && ui.includes('function goHome()')
-  && !ui.includes('__cfwBk'),
-  '记住"进来前有没有会话"、排除首页那一行、没会话就回首页；无埋点')
+  && !ui.includes('__cfwBk') && !ui.includes('__cfwSb'),
+  '确证是首页才回首页、其余绝不点「新会话」、保持 6 次重试；无埋点')
 rec('C15_close_keeps_the_transition_then_drops_the_box',
   ui.includes('accCloseTimer')
   && /setTimeout\(function \(\) \{ accCloseTimer = null; syncAccDisplay\(\) \}, 320\)/.test(ui),
