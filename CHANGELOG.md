@@ -3,6 +3,16 @@
 All notable changes to this package. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.1] — 2026-09-29
+
+- **跟进 DSH 0.1.7-rc.2 的新侧栏**：面板入口改成官方槽位注册（`sidebar.panellist` 列表项 + `main` 键控页，`lib/client.js`），
+  不再由宿主改写页面 HTML 注入脚本、由脚本自己往侧栏插行。侧栏那一行的按钮、标题、选中态、点击切页现在都归壳渲染与调度。
+- `package.json` 增加 `dsh.client`（`platform: web`）与 `exports["./client"]`；`npm run check`/`prepack`/CI 纳入新的 `test:ui`。
+- `lib/ui.js` 增加「承载模式」：被壳的 `main` 槽页承载时只渲染到壳给的容器里（列表占满整页），
+  不设 `data-dsh-chat-digest-view`、不进 `[class*="centerCol"]`、不切用户当前会话；关面板交给壳的 `layout.selectPanel(null)`。
+  非承载路径（旧壳 / 直接打开 `/chat-feed/ui.js`）保持原行为不变。
+- 注：面板 UI 需要 DSH `>= 0.1.7-rc.2`（槽位接口）；宿主半边仍兼容 `>= 0.1.5-rc.1`。
+
 ## [1.5.0] — 2026-09-27
 
 - 私人 profile 统一为包外稳定目录；会话和所有写入工具使用物理路径，旧联接只作兼容。
