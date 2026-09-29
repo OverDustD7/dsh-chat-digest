@@ -87,7 +87,17 @@ const ui = fs.readFileSync(path.join(PKG, 'lib', 'ui.js'), 'utf8')
 rec('C09_ui_exposes_open_panel_hook',
   ui.includes('window.__cfwUi = {') && ui.includes('openPanel: openPanel'), '')
 rec('C10_ui_skips_own_row_when_shell_provides_one',
-  /function ensureEntry\(\) \{[^}]*window\.__cfwSidebarRow === true\) return/s.test(ui), 'ensureEntry 认标志位')
+  /window\.__cfwSidebarRow === true\) \{ ensureShellRowMore\(\); return \}/.test(ui),
+  '壳给了行：不再自己插行，只补 ⋯')
+// 壳的行是 React 渲染的，⋯ 是外来的；被冲掉要能补回来，且补的时候必须幂等（观察器会反复调）。
+rec('C12_ui_restores_the_more_button_idempotently',
+  ui.includes('function ensureShellRowMore()')
+  && ui.includes("row.querySelector('.cfw-more2') !== null")
+  && ui.includes('querySelector(\'[data-dsh-panel-entry="chat-digest"]\')'),
+  '⋯ 幂等补回（拿我们图标上的标记反查壳的行）')
+rec('C13_cleanup_only_removes_our_own_row',
+  /entryRow\.getAttribute\(ENT_ATTR\) !== null\) entryRow\.parentNode\.removeChild/.test(ui),
+  'cleanup 不会删掉壳渲染的那一行')
 const body = fs.readFileSync(path.join(PKG, 'lib', 'host-body.txt'), 'utf8')
 rec('C11_host_still_injects_ui_js',
   /indexOf\(SCRIPT_UI\)\s*<\s*0/.test(body), '面板路径没被动过')
