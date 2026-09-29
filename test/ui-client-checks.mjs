@@ -108,6 +108,14 @@ rec('C14_collapsed_expander_leaves_no_flex_gap_in_shell_mode',
 rec('C16_expander_compensates_parent_row_gap',
   ui.includes('function parentRowGap()') && ui.includes('accEl.style.marginTop = neg')
   && ui.includes('accEl.style.marginBottom = neg'), '用父列 row-gap 的负 margin 贴住入口行')
+// 2026-09-29 真机实测：折叠区从 display:none 展开时自身宽度是变的（252→256）⇒ **不能量它自己**；
+// 必须用两个稳定盒子（父列的可用宽度 vs 行的宽度）算差，否则当场量到 0 差、左右各多出 2px。
+rec('C17_expander_aligns_by_parent_row_boxes_not_its_own_rect',
+  ui.includes('var baseL = parR.left + (parseFloat(pcs.paddingLeft) || 0)')
+  && ui.includes('var baseR = parR.right - (parseFloat(pcs.paddingRight) || 0)')
+  && ui.includes('var dl = +(rowR.left - baseL).toFixed(1)')
+  && !ui.includes('__cfwAccDbg'),
+  '按父列/行算；且没有留下临时调试')
 rec('C15_close_keeps_the_transition_then_drops_the_box',
   ui.includes('accCloseTimer')
   && /setTimeout\(function \(\) \{ accCloseTimer = null; syncAccDisplay\(\) \}, 320\)/.test(ui),
