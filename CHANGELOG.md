@@ -3,6 +3,17 @@
 All notable changes to this package. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.1] — 2026-09-29
+
+- **侧栏入口行改由客户端插件注册进壳的槽位**（`lib/client.js` + `package.json` 的 `dsh.client` / `exports["./client"]`）：
+  0.1.7-rc.2 的「全局面板」是槽位驱动的，那一行现在**由壳自己渲染** ⇒ 图标盒、标题、悬停/选中态与
+  任务看板/技能中心/记忆系统天然一致（自己往侧栏塞按钮的旧做法样式对不上）。
+- **面板路径没有动**：宿主仍注入 `lib/ui.js`，ui.js 照旧抢 `.centerCol`、左右分栏、返回/刷新会话全不变。
+  槽位行的点击走 `window.__cfwUi.openPanel()`（旧面板路径），并阻止冒泡，免得壳把它当成"选中全局面板"。
+- `lib/ui.js` 只加两个口子：`ensureEntry()` 在壳提供了入口行时不再自己插一行（否则侧栏出现两个「聊天摘要」）；
+  末尾暴露 `window.__cfwUi = { openPanel, closePanel, isOpen }`。
+- 新增 `test/ui-client-checks.mjs`（11 条契约检查，零依赖），并入 `check` / `prepack`。
+
 ## [1.5.0] — 2026-09-27
 
 - 私人 profile 统一为包外稳定目录；会话和所有写入工具使用物理路径，旧联接只作兼容。
