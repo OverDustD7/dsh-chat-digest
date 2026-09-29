@@ -143,6 +143,18 @@ rec('C07_page_id_matches_plugin_name', !!row && row.options.id === 'chat-digest'
     !/indexOf\(SCRIPT_UI\)\s*<\s*0/.test(body) && /indexOf\(SCRIPT_RIGHT\)\s*<\s*0/.test(body),
     'ui.js 不再注入；right.js 照旧')
 
+  // C16/C17：boot 竞态（2026-09-29 实测后果：侧栏两个「聊天摘要」、主区空白）
+  //   ui.js 是"载入即 boot()"，而 HOST 要等 mountInto 才设 ⇒ 必须在**载入之前**告诉它"你被承载了"。
+  const client = fs.readFileSync(path.join(PKG, 'lib', 'client.js'), 'utf8')
+  const setHostedAt = client.indexOf('window.__cfwHosted = true')
+  const appendAt = client.indexOf('document.head.appendChild(s)')
+  rec('C16_client_flags_hosted_before_loading_ui',
+    setHostedAt >= 0 && appendAt >= 0 && setHostedAt < appendAt,
+    setHostedAt < 0 ? '没置 window.__cfwHosted' : '置位在 appendChild 之前')
+  rec('C17_ui_honours_hosted_flag_and_null_host',
+    ui.includes('window.__cfwHosted === true') && ui.includes('HOST ? HOST.container'),
+    'hosted() 认标志位；ensurePanel 在 HOST 为空时不取属性')
+
   let bad = 0
   for (const r of results) {
     if (!r.ok) bad++
