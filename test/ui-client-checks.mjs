@@ -98,6 +98,16 @@ rec('C12_ui_restores_the_more_button_idempotently',
 rec('C13_cleanup_only_removes_our_own_row',
   /entryRow\.getAttribute\(ENT_ATTR\) !== null\) entryRow\.parentNode\.removeChild/.test(ui),
   'cleanup 不会删掉壳渲染的那一行')
+// 壳的面板列表是带 gap 的 flex 列：折叠区那个 0 高度的盒子也白占一个 gap（用户报「巨大缝隙」）。
+rec('C14_collapsed_expander_leaves_no_flex_gap_in_shell_mode',
+  ui.includes('function syncAccDisplay()')
+  && ui.includes("accEl.style.display = 'none'")
+  && ui.includes("if (!shellMode()) { accEl.style.display = ''; return }"),
+  '折叠时摘出布局；非壳模式一字未改')
+rec('C15_close_keeps_the_transition_then_drops_the_box',
+  ui.includes('accCloseTimer')
+  && /setTimeout\(function \(\) \{ accCloseTimer = null; syncAccDisplay\(\) \}, 320\)/.test(ui),
+  '收起先跑完过渡，320ms 后再摘盒子')
 const body = fs.readFileSync(path.join(PKG, 'lib', 'host-body.txt'), 'utf8')
 rec('C11_host_still_injects_ui_js',
   /indexOf\(SCRIPT_UI\)\s*<\s*0/.test(body), '面板路径没被动过')
