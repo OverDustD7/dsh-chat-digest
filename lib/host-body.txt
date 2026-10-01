@@ -1987,18 +1987,13 @@ const roundPromptLive = async (date, reason, since, mode) => {
                 return;
               } catch (e) { noteError('auto-retry', e) }
             } else {
-              // 试满了：这个签名**换线路**再来一轮（不是缩输出 —— 触发条件是单次事件体大，缩了只会掩盖）
-              const cur = String(routeOfActive() || '');
-              if (flaky && R1 && String(R1) !== cur) {
-                S.retryCount = 0; S.retryAt = 0;
-                S.note = '流式截断连败 ' + cap + ' 次（' + cur + '）⇒ 换线路到 ' + String(R1) + ' 重跑一轮（' + cstHM() + '）';
-                await saveState();
-                try {
-                  Promise.resolve(triggerRound('auto', { probeRoute: R1 })).catch((e) => noteError('degrade-trigger', e));
-                } catch (e) { noteError('degrade-trigger', e) }
-                return;
-              }
-              S.note = '上一轮异常结束（' + abn + '）且已自动续跑 ' + S.retryCount + ' 次，先停下（' + cstHM() + '）';
+              // 试满了：**不换线路**（用户 2026-10-01 定案：「不需要换到另一条线路重跑，他自己服务侧
+              //   就是会有问题，像现在回复继续就好了，不然你这不必然切到 paratera 去了」）——
+              //   这个签名是服务端侧的间歇缺陷，换线路等于必然去花 paratera 的钱；停在这里、留痕，
+              //   等下一轮或他手点「获取」即可（手点会重新开一轮 ⇒ 续跑计数归零）。
+              S.note = '上一轮异常结束（' + abn + (flaky ? '／流式截断签名' : '') + '）且已自动续跑 '
+                     + S.retryCount + '/' + cap + ' 次，先停下（' + cstHM() + '）'
+                     + (flaky ? '—— 原文见 lastStreamError' : '');
               await saveState();
               return;
             }

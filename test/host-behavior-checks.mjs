@@ -67,12 +67,15 @@ const stFlaky = async () => ({ open: false, ends: 7, lastReason: 'error', lastEr
     { prompts: r.prompts.length, stillBusy: S.busy === true, noteMentionsWait: String(S.note || '').indexOf('退避中') >= 0 });
 }
 {
+  // 用户 2026-10-01 定案：**试满不许换线路**（「他自己服务侧就是会有问题，像现在回复继续就好了，
+  //   不然你这不必然切到 paratera 去了」）⇒ 停在原会话 + 留痕，等下一轮或手点获取。
   const S = { busy: true, busyFor: 'sess-1', busySawOpen: true, busyBase: 0, autoRetry: true, retryCount: 5 };
   const r = await busyProbe(S, stFlaky);
-  record('H38_exhausted_flaky_degrades_to_the_other_route',
-    { prompts: 0, fired: 1, route: 'paratera', noteMentionsRoute: true },
-    { prompts: r.prompts.length, fired: r.triggers.length, route: (r.triggers[0] || {}).opts?.probeRoute,
-      noteMentionsRoute: String(S.note || '').indexOf('换线路') >= 0 });
+  record('H38_exhausted_flaky_stops_without_switching_route',
+    { prompts: 0, fired: 0, noteMentionsStop: true, notePointsToLastStreamError: true },
+    { prompts: r.prompts.length, fired: r.triggers.length,
+      noteMentionsStop: String(S.note || '').indexOf('先停下') >= 0,
+      notePointsToLastStreamError: String(S.note || '').indexOf('lastStreamError') >= 0 });
 }
 {
   // 普通错误（非该签名）：**老行为一字不变** —— cap 3、不退避、续跑文本就是「继续」
