@@ -58,6 +58,27 @@ function record(id, expected, actual){results.push({id,expected,actual,pass:JSON
  const probe=new Function('S','DEFAULT_ROUTE','PROBE_URL','fetch','saveState',chunk('const pluginProbe = async (want) => {','// 载入后')+'return pluginProbe;')(S,'paratera',{thu:'synthetic-thu',paratera:'synthetic-paratera'},async url=>{requested=url;return {status:200};},async()=>{});
  const r=await probe();record('H08_default_probe_route_matches_target',{requested:'synthetic-paratera',route:'paratera'},{requested,route:r.route});
 }
+{
+ // A100（2026-10-01 用户报「图片显示不出来」）：条目把路径写成 `output/window/images/…`，
+ //   而提示词里那条相对路径的**根就是 `{profile}\output`** ⇒ 拼出来 `…\output\output\window\…` 一律 404
+ //   （实测：同一张图去掉 `output/` 前缀就 200 image/png）。
+ //   修法＝`fileCandidates` 再试一次"抹掉开头的 output/"，且仍逐个过 `inRoot()`（可读范围不扩大）。
+ const ROOT = 'P:\\output';
+ const src = chunk('const fileCandidates = (p) => {', 'const serveLocal = ()');
+ const mk = () => new Function('FILE_ROOTS', 'inRoot', src + 'return fileCandidates;')(
+   [ROOT],
+   (abs) => String(abs).toLowerCase().indexOf(ROOT.toLowerCase()) === 0);
+ const fc = mk();
+ const withPrefix = fc('output/window/images/grp/abc_h.png');
+ const withoutPrefix = fc('window/images/grp/abc_h.png');
+ const outside = fc('../secret.txt');
+ record('H35_file_candidate_tolerates_a_spurious_output_prefix',
+   { withPrefixResolves: true, bothSame: true, dotDotRejected: true, stillInsideRoot: true },
+   { withPrefixResolves: withPrefix.some((c) => c.toLowerCase() === (ROOT + '\\window\\images\\grp\\abc_h.png').toLowerCase()),
+     bothSame: withoutPrefix.some((c) => c.toLowerCase() === (ROOT + '\\window\\images\\grp\\abc_h.png').toLowerCase()),
+     dotDotRejected: outside.length === 0,
+     stillInsideRoot: fc('output/window/x.png').every((c) => c.toLowerCase().indexOf(ROOT.toLowerCase()) === 0) });
+}
 // A19（2026-09-21 追加，用户报「启用了自动今天却没有自动」）：把自动 tick 抽出来单跑。
 // A99（2026-10-01 用户定案口径）：**Auto ＝「过了 auto 时间还没跑过 auto，就立刻跑」**，
 //   判据从"今天跑过没"改成"上次成功跑过的时刻 vs 最近一个应跑时刻"，所以探针要**给一个真实的 now**，

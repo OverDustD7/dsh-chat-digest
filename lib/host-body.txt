@@ -1123,7 +1123,19 @@ const AGENT_PRESET = (typeof CF.agentPreset === 'string') ? CF.agentPreset : '';
           return inRoot(abs) ? [abs] : [];
         }
         const rel = s.replace(/^\/+/, '');
-        return FILE_ROOTS.map((r) => (r + '\\' + rel).replace(/\//g, '\\')).filter(inRoot);
+        const cands = FILE_ROOTS.map((r) => (r + '\\' + rel).replace(/\//g, '\\')).filter(inRoot);
+        // A100（2026-10-01 用户报「图片显示不出来」）：主 agent 有时会把路径写成 `output/window/images/…` ——
+        //   而提示词里那条相对路径的**根就是 `{profile}\output`**，于是"根 + 路径"拼出
+        //   `…\output\output\window\images\…`，一律 404（实测：同一张图去掉 `output/` 前缀就 200 image/png）。
+        //   这里**再试一次"抹掉开头的 output/"**；仍然逐个过 `inRoot()` ⇒ 可读范围一点没扩大。
+        if (rel.indexOf('output/') === 0 || rel.indexOf('output\\') === 0) {
+          const rel2 = rel.slice('output/'.length);
+          FILE_ROOTS.forEach((r) => {
+            const c = (r + '\\' + rel2).replace(/\//g, '\\');
+            if (inRoot(c) && cands.indexOf(c) < 0) cands.push(c);
+          });
+        }
+        return cands;
       };
       const serveLocal = () => {
         try {
