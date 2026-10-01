@@ -293,6 +293,61 @@ function loadStateWith(S, files, stateFile, stateOld, saveCalls) {
            step: (bad.r.steps || []).some((s) => String(s).indexOf('dispatch-retarget:') === 0),
            trustedNoRetarget: !!good.r.retargeted, trustedKeepsId: good.r.sessionId });
 }
+// A98（2026-10-01 用户问"凭什么 9-29 没跑"）：**打空不许烧掉一整天，而且必须留痕。**
+//   实测 09-29 23:30：`autoFiredDay` 落盘成 09-29，而派发在"提示词入队"前就失败
+//   （`pendingCollect`/`busy`/`note` 全是旧值、目标会话从未被唤醒），错只进了内存里的 `lastError`。
+//   修法：入队成功（triggerRound 回 ok）才写 `autoFiredDay`；失败退避重试（10 分钟、同日最多 3 次）
+//   并把原文写进 `lastTriggerError`。下面四条把这三件事钉住。
+async function autoTickState(S, day, hm, triggerImpl) {
+  let captured = null;
+  const timerSvc = { interval: (cb) => { captured = cb; return null; } };
+  const fn = new Function('timerSvc', 'S', 'checkBusy', 'checkCtx', 'cstDay', 'cstHM', 'saveState', 'triggerRound', 'noteError',
+    chunk('const offTick = timerSvc.interval(() => {', '}, 30000);') + '}, 30000); return offTick;');
+  fn(timerSvc, S, async () => {}, async () => {}, () => day, () => hm, async () => {}, triggerImpl, () => {});
+  captured();
+  await new Promise((r) => setTimeout(r, 0));    // 让 then/catch 跑完
+  return S;
+}
+{
+  // ① 派发失败 ⇒ **不消费今天**（否则之后每次 tick 都被 autoFiredDay 跳过，这一晚永久作废）
+  let n1 = 0;
+  const failed = await autoTickState({ auto: true, autoTime: '23:30', busy: false, autoFiredDay: '' },
+    '2026-09-29', '23:30', () => { n1 += 1; return { ok: false, error: 'collect-prompt: 会话不可用' } });
+  record('H28_failed_fire_does_not_consume_the_day',
+    { fired: 1, autoFiredDay: '', tries: 1, retryScheduled: true, errorKept: true, noteSaysFailed: true },
+    { fired: n1, autoFiredDay: failed.autoFiredDay || '', tries: failed.autoFireRetryTries,
+      retryScheduled: failed.autoFireRetryAt > Date.now(),
+      errorKept: String(failed.lastTriggerError || '').indexOf('会话不可用') >= 0,
+      noteSaysFailed: String(failed.note || '').indexOf('自动触发失败') >= 0 });
+  // ② 入队成功才写 autoFiredDay，并把退避计数清零
+  let n2 = 0;
+  const okd = await autoTickState({ auto: true, autoTime: '23:30', busy: false, autoFiredDay: '',
+    autoFireRetryDay: '2026-09-29', autoFireRetryAt: Date.now() - 1, autoFireRetryTries: 2 }, '2026-09-29', '23:30',
+    () => { n2 += 1; return { ok: true } });
+  record('H29_successful_fire_consumes_the_day',
+    { fired: 1, autoFiredDay: '2026-09-29', tries: 0, retryAt: 0 },
+    { fired: n2, autoFiredDay: okd.autoFiredDay, tries: okd.autoFireRetryTries, retryAt: okd.autoFireRetryAt });
+  // ③ 退避窗口内不再扣扳机（10 分钟内最多一次）
+  let n3 = 0;
+  await autoTickState({ auto: true, autoTime: '23:30', busy: false, autoFiredDay: '',
+    autoFireRetryDay: '2026-09-29', autoFireRetryAt: Date.now() + 5 * 60 * 1000, autoFireRetryTries: 1 }, '2026-09-29', '23:35',
+    () => { n3 += 1; return { ok: true } });
+  record('H30_retry_backoff_blocks_refire', 0, n3);
+  // ④ 同一天试满 3 次就停（不再每 30 秒撞一次）
+  let n4 = 0;
+  const capped = await autoTickState({ auto: true, autoTime: '23:30', busy: false, autoFiredDay: '',
+    autoFireRetryDay: '2026-09-29', autoFireRetryAt: 0, autoFireRetryTries: 3,
+    lastTriggerError: 'collect-prompt: 会话不可用' }, '2026-09-29', '23:59',
+    () => { n4 += 1; return { ok: true } });
+  record('H31_auto_gives_up_after_3_failures', { fired: 0, whyMentions: true },
+    { fired: n4, whyMentions: String(capped.autoWhy || '').indexOf('失败 3 次') >= 0 });
+  // ⑤ 跨过零点 ⇒ 退避计数归零（否则第二天一上来就被"已失败 3 次"卡死，永远不跑）
+  let n5 = 0;
+  await autoTickState({ auto: true, autoTime: '23:30', busy: false, autoFiredDay: '2026-09-29',
+    autoFireRetryDay: '2026-09-29', autoFireRetryAt: 0, autoFireRetryTries: 3 }, '2026-09-30', '23:30',
+    () => { n5 += 1; return { ok: true } });
+  record('H32_retry_counter_resets_on_a_new_day', 1, n5);
+}
 const failures = results.filter((r) => !r.pass)
 console.log(JSON.stringify({ total: results.length, passed: results.length - failures.length, failures }, null, 2))
 if (failures.length) process.exitCode = 1
