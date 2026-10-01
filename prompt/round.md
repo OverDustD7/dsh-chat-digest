@@ -2,10 +2,10 @@
 0) **路由：宿主已探好并选好会话，你只核对与回报** —— `GET /chat-feed/api/state?slim=1` 看 `routePick`/`sessThu`/`sessParatera`/`routeProbe`/`ctxRatioThu`。
    **你被唤醒＝那条线路当时是通的**（不通就不会唤醒你、也不动采集指针）；本轮模式见开头（`pipeline` 只跑管线 / `full` 全轮）。**不弹卡片问他要不要用付费线路**（他多半看不到，且"问"要先唤醒付费会话）。
    `routeProbe` 为 null 或带 `err` ⇒ 自己跑 `{py} {agent}\tools\route_probe.py`，按其结论 `POST /chat-feed/api/route-pick {"route":"thu"|"paratera"}` 纠正后再开工。
-   **不要用 selectModel 换供应商**（两个会话各带自己的上下文更干净）。**THU 不能读图**；刷新阈值**以 `/state` 的 `ctxRatioThu` 实时值为准**，提示词里不写死。
+   **不要用 selectModel 换供应商**（两个会话各带自己的上下文更干净）。**默认线路＝THU**（窗口已提到 1M）；刷新阈值**以 `/state` 的 `ctxRatioThu` 实时值为准**，提示词里不写死。图片一律走本地视觉线的产物（`_vision.md` / `_vision_detail.json`），别指望自己读图。
 1) **取数你自己跑**：`{pkg}\pipeline\daily_prep.py {date}`。**步数以 `prep_report.md` 表行数为准，别写死**；开工前读报告头两行自证（`微信登录态`、`数据窗口自证`）—— 微信显示「未登录」＝**今天没有新消息**，不是取数失败，把能做的做完并写明。
 2) **提炼：本机初提 → 审计 → 回原文核 → 你成稿**：`{agent}\tools\local_prepass.py <date>`（本地、0 元）→ `{agent}\tools\prepass_audit.py <date>`（**报「疑似跑飞」的块必须 `--redo <块号>` 补跑** —— 9B 会输出 2 万 token 后归零、静默丢整块，**0 条不等于没内容**）→ 候选逐条 `{agent}\tools\anchor_read.py <片文件> --lines 行号` 回原文核（核不上不许进条目）→ 你一次成稿。**提炼前必读三份视图**（_timeline / _articles / _threads），话题归并必做。
-3bis) **压缩过就回文件核，不许凭印象**：DSH 在 **0.8×窗口**自动压缩（THU 200k ⇒ 160k），**摘要只留指针不留原文**。记不清的一律回文件/原文核（`anchor_read.py`/`read`/`grep`）。压缩不是错，**凭压缩后的印象下结论**才是。
+3bis) **压缩过就回文件核，不许凭印象**：DSH 在 **0.8×窗口**自动压缩（两条线都 1M ⇒ 压缩线 800k），**摘要只留指针不留原文**。记不清的一律回文件/原文核（`anchor_read.py`/`read`/`grep`）。压缩不是错，**凭压缩后的印象下结论**才是。
 3ter) **每过一个阶段写 `{profile}\output\window\round_state.md`**（覆盖写：已完成/产物路径/下一步/关键事实）—— 压缩不可逆，回这个文件而不是回印象；收尾并进 `docs\debug_<date>.md`。
 3quater) **归属闸门（都踩过）**：
    · **图片/截图必须回那条消息的前后 2–3 条文本**：图上"写了什么"可信，"是什么意思"不可信（实测：辅导员发自己的课程邮件截图＋「坏了/你给我留了多少算力呢」在开玩笑，被写成"明天去上产业生态学第一课"）。`ocr_sure` 只代表字读得清。**已做进产物**：`{profile}\output\days\<date>_vision_detail.json` 每条 `review[].ctx` 有 `before`/`after`（同群 ±15 分钟）⇒ **判归属只认这里**；`ctx` 空或标 `missing` 的**不许猜**，标「待人工确认」。
