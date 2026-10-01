@@ -162,6 +162,15 @@ rec('C18_back_from_home_returns_home_not_stuck_in_agent_session',
   && ui.includes('function goHome()')
   && !ui.includes('__cfwBk') && !ui.includes('__cfwSb'),
   '确证是首页才回首页、其余绝不点「新会话」、保持 6 次重试；无埋点')
+// A101（2026-10-01 用户报「图片显示不出来」）：`.cfw-img` 只有 `max-width:100%; height:auto`，
+// 未加载时盒子高度 0 ⇒ 带 `loading="lazy"` 就"离视口太远"永不加载、高度仍是 0（自锁）。
+// 实测：面板里那个 img 永远 naturalWidth=0 / complete=false，而同一 URL 新建一个 img 立刻 1080×1920。
+// 钉住：内嵌图**不许再带 lazy**，且仍走 `/api/file`（要字节）。
+const rightJs = fs.readFileSync(path.join(PKG, 'lib', 'right.js'), 'utf8')
+rec('C23_embedded_image_is_not_lazy_loaded',
+  rightJs.includes('class="cfw-img"') && !/class="cfw-img"[^>]*loading="lazy"/.test(rightJs)
+  && rightJs.includes("'/chat-feed/api/file?p=' + encodeURIComponent(t)"),
+  '内嵌图不带 lazy（懒加载 + 零高度会自锁）、且仍走 /api/file')
 // #95（2026-09-29 用户报"返回的逻辑怎么又坏了"的真凶）：还原原来**只**按侧栏标题找那一行，而
 // **工作区收起时 DSH 不渲染它的会话行** ⇒ 找满 6 次也找不到，人被丢在聊天摘要的常驻会话里。
 // 现在 ui.js 优先用壳的 id 导航（不看 DOM），桥由 lib/client.js 提供；取不到就退回标题匹配。
