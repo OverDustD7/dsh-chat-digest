@@ -4,8 +4,9 @@ r"""跑前先探"某高校免费网关（线路1）还通不通" —— 通就�
 为什么要它：用户 2026-09-17 明确「每次跑之前先检测 线路1 连通性，如果可以用 线路1 就用 线路1，不可以才用 paratera」。
 背景事实（实测）：线路1（provider `deepseek`，`<部署方的免费网关>`）**免费但很不稳定** ——
 09-17 才通、前一天不通；paratera 稳定但走 DeepSeek 官方高峰价（干净一轮 ≈ ¥2–3）。
-**还有一个硬差异必须知道**：线路1 的 `contextWindow` 只有 **200,000**，paratera 是 **1,000,000**（差 5 倍）——
-所以"能用 线路1"只解决钱的问题，**长上下文会缩水**（`ctxRatio=0.5` 时 200k 会在 100k 就触发自动刷新）。
+**窗口这条硬差异已经消失**（2026-10-01：线路1 的 `contextWindow` 也提到 1,000,000 了）——
+两条线现在都是 1M，选线路只需看"通不通 / 花不花钱"。（下面的 `ctx` 只是命令行临时试的默认值，
+权威是 profile `cordis.patch.yml` 里每条 route 的 provider/model 与模型条目的 `contextWindow`。）
 
 退出码（沿用"上游缺失单独报"的纪律）：**0 = 线路1 可用** ｜ **3 = 线路1 不可用（该走 paratera）** ｜ 1 = 探测本身出错。
 
@@ -41,8 +42,8 @@ TZ = dt.timezone(dt.timedelta(hours=8))
 #   见 profile 的 `cordis.patch.yml`；这里的默认值只用来在命令行上临时试。
 ROUTES = {
     "thu": {"provider": "deepseek", "model": os.environ.get("线路1_MODEL", ""), "keyEnv": os.environ.get("线路1_KEY_ENV", "线路1_API_KEY"),
-            "base": os.environ.get("线路1_BASE", ""), "ctx": 200000, "price": "免费",
-            "note": "免费线；**能不能读图、窗口多大由部署方自己确认**"},
+            "base": os.environ.get("线路1_BASE", ""), "ctx": 1000000, "price": "免费",
+            "note": "免费线；**能不能读图、窗口多大由部署方自己确认**（本机 2026-10-01 起窗口＝1M，且是默认线路）"},
     "paratera": {"provider": "paratera", "model": os.environ.get("PARATERA_MODEL", ""), "keyEnv": "PARATERA_API_KEY",
                  "base": os.environ.get("PARATERA_BASE", ""), "ctx": 1000000, "price": "付费线",
                  "note": "付费线；窗口与读图能力由部署方自己确认"},

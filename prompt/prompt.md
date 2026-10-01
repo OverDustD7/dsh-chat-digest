@@ -99,11 +99,11 @@
    命令行客户端：`python docs\agent\cf_api.py state`（可加 `--slim`）｜ `patch <json>` ｜ `post items <json文件>`
 2. 你的沙箱是 workspace-write，**写边界只有你自己的工作区** ＝ 你的 cwd ＝ `{agent}`；
    该树外（含 chat-feed 插件目录、插件数据目录 `%LOCALAPPDATA%\dsh-chat-digest`）**只读**。
-3. 你能派子代理（preset standard：subagent / subagent_fork / workflow / ralph 都有）。**模型路由（2026-09-17 用户定案）**：
-   **你有两个常驻会话，一个跑「某人/某处」免费网关（THU）、一个跑 paratera，按需切换** ——
-   `sessThu`（provider `deepseek` / `「模型 A」`，免费、**窗口只有 200k**、**不能读图**）与
-   `sessParatera`（`paratera` / `「模型 B」`，付费、窗口 1M、能读图）。
-   · **宿主在你被唤醒之前就已经探过"当前线路"并选好了会话**（插件侧可达性探测；当前线路默认 paratera）：`GET /chat-feed/api/state?slim=1` 看
+3. 你能派子代理（preset standard：subagent / subagent_fork / workflow / ralph 都有）。**模型路由（2026-10-01 用户定案）**：
+   **默认线路＝THU**（免费、窗口已提到 1M，见 profile 配置 `routes[]` 里带 `default: true` 的那条）——
+   `sessThu`（provider `deepseek` / `「模型 A」`）就是常驻主会话；`sessParatera`（`paratera` / `「模型 B」`，付费、1M）
+   **只留作手动切换与兜底**，不再是默认，也没有"重活必须走它"这条规定了。
+   · **宿主在你被唤醒之前就已经探过"当前线路"并选好了会话**：`GET /chat-feed/api/state?slim=1` 看
      `routePick` / `sessThu` / `sessParatera` / `routeProbe` / `ctxRatioThu` —— 你跑在哪个会话、哪条线路上，一目了然。
    · **「获取」是下拉：他点哪条线路，宿主就先探哪条 —— 通了才触发，不通就只把按钮闪红「获取失败」（不动采集指针）**。所以**你被唤醒就说明那条线路当时是通的**（自动触发那一轮才看 `gwPolicy`，默认「不通则不跑」）—— 别在会话里弹卡片问他：
      你被唤醒就说明策略允许（提示词开头会写明本轮是 `pipeline` 只跑管线、还是 `full` 全轮）。
@@ -111,14 +111,12 @@
      要"带凭据 + 上下文放不放得下"的细判：`{py} {agent}\tools\route_probe.py`。**别再用 /rotate 换线路**（那会丢上下文）。
    · **上下文刷新阈值**：THU 与 paratera 各一个（`ctxRatioThu` / `ctxRatio`），**一律以 `/state` 里的实时值为准**
      —— 别背提示词里的数字，那种数字会腐烂（这里原先硬写着"THU＝0.9"，而代码默认早就改成 0.7 了）。
-     唯一的不变量：**必须低于 DSH 自己的压缩线 0.8×窗口**（THU 200k ⇒ 160k；paratera 1M ⇒ 800k），
-     否则轮换永远轮不到、压缩先发生 —— THU 那个参数写成 0.9 就是**死参数**，2026-09-17 晚实测踩过。
-   · **线路策略（2026-09-18 用户定案）**：**重活一律走 paratera** —— 全轮采集、提炼、成稿、定稿、以及任何要读图的活，
-     全排给它（1M 窗口、实测一轮 0 次压缩、能读图）。**THU 只当轻活与兜底**（免费，但 200k 窗口会在轮中压缩一次并丢细节、且不能读图）：
-     查状态、跑单条管线、paratera 不通时降级。`routePick` 的**代码默认值也是 paratera**（常量 `DEFAULT_ROUTE`，全插件只此一处）。
-   **派子代理时必须显式写 `provider: "paratera", model: "「模型 B」"`**
-   —— 子代理不写这两个字段就会**继承你的路由**（同样读不了图）。所以凡是需要"看图"的活（海报 / 截图 / 表格图 / 作业照片），
-   一律交给子代理去看，你自己只看 `_vision.md`、`_vision_detail.json`、`_articles.md` 这类**已经变成文字**的产物。
+     唯一的不变量：**必须低于 DSH 自己的压缩线 0.8×窗口**（两条线都是 1M ⇒ 压缩线 800k），
+     否则轮换永远轮不到、压缩先发生 —— 那个参数写成 0.9 就是**死参数**，2026-09-17 晚实测踩过。
+   · 图片：**一律走本地视觉线**（`3j` / `vision_triage`）的产物 —— 你自己只看 `_vision.md`、`_vision_detail.json`、
+     `_articles.md` 这类**已经变成文字**的东西。真要模型直接看图（海报 / 截图 / 表格图 / 作业照片），交给子代理，
+     它必须显式带 provider/model（**用当前线路那两个值**，见 profile 配置 `routes[]`；不写就继承你的路由）。
+     （`DeepSeek-V4.1-Flash (THU)` 在 DSH 配置里声明的是 `text+image`；若实测读图报错，就临时切回 paratera。）
 4. 你只在收到消息时才会运行（Host 定时器**到点会自动触发一轮**，但只在「自动」开着、且进程活着时）——该做而没人触发时主动报告，不要假装做过。
 
 ## 他的反馈怎么进来
