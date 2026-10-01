@@ -315,7 +315,7 @@ return {
             // A63：派发的正向断言要跨重启活下来（漏进白名单 = 重启后又把一轮发给老 cwd 的会话）
             cwdTag: String(S.cwdTag || ''),
             cwdMade: Array.isArray(S.cwdMade) ? S.cwdMade.slice(-12).map(String) : [],
-            routePick: S.routePick || '', inbox: INBOX_DIR, routes: ROUTES.map(function (r) { return { id: r.id, label: r.label, menuName: r.menuName || '', hint: r.hint || '', 'default': !!r['default'] } }),
+            routePick: S.routePick || '', inbox: INBOX_DIR, routes: ROUTES.map(function (r) { return { id: r.id, label: r.label, menuName: r.menuName || '', hint: r.hint || '', provider: r.provider || '', model: r.model || '', 'default': !!r['default'] } }),
     routeAt: S.routeAt || 0, routeWhy: S.routeWhy || '',
             ctxRatioThu: (S.ctxRatioThu === undefined ? 0.7 : S.ctxRatioThu),
             slotsInitAt: S.slotsInitAt || 0, slotsInitVer: S.slotsInitVer || 0,
@@ -2091,7 +2091,7 @@ const roundPromptLive = async (date, reason, since, mode) => {
         ctxLastRotateSteps: Array.isArray(S.ctxLastRotateSteps) ? S.ctxLastRotateSteps : [],
         extraMains: Array.isArray(S.extraMains) ? S.extraMains : [], extraMainsAt: Number(S.extraMainsAt || 0),
         // 双会话自证（2026-09-17）：两个槽 + 当前选中的路线 + 插件侧探测结果 + 线路1 的刷新阈值
-        routePick: S.routePick || '', inbox: INBOX_DIR, routes: ROUTES.map(function (r) { return { id: r.id, label: r.label, menuName: r.menuName || '', hint: r.hint || '', 'default': !!r['default'] } }),
+        routePick: S.routePick || '', inbox: INBOX_DIR, routes: ROUTES.map(function (r) { return { id: r.id, label: r.label, menuName: r.menuName || '', hint: r.hint || '', provider: r.provider || '', model: r.model || '', 'default': !!r['default'] } }),
     routeAt: S.routeAt || 0, routeWhy: S.routeWhy || '',
         activeRoute: routeOfActive(),
         sessThu: S.sessThu || '', sessParatera: S.sessParatera || '',
