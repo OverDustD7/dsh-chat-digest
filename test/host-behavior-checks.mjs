@@ -59,24 +59,47 @@ function record(id, expected, actual){results.push({id,expected,actual,pass:JSON
  const r=await probe();record('H08_default_probe_route_matches_target',{requested:'synthetic-paratera',route:'paratera'},{requested,route:r.route});
 }
 // A19（2026-09-21 追加，用户报「启用了自动今天却没有自动」）：把自动 tick 抽出来单跑。
-//   实测根因＝判据里有 `S.collectDay === day`，而 collectDay 是**游标**（"上次采到哪天"），
-//   09-20 凌晨那一轮把它写成 2026-09-20 ⇒ 当晚 23:30 的 tick 认为"今天已采"直接跳过。
-function autoTick(S, day, hm) {
+// A99（2026-10-01 用户定案口径）：**Auto ＝「过了 auto 时间还没跑过 auto，就立刻跑」**，
+//   判据从"今天跑过没"改成"上次成功跑过的时刻 vs 最近一个应跑时刻"，所以探针要**给一个真实的 now**，
+//   `cstDay/cstHM` 必须按传入的 ms 算（旧版是常量函数，测不出跨天/跨欠账）。
+const PREV_DAY_SRC = (() => {
+  const start = body.indexOf('const prevDayOf =');
+  return body.slice(start, body.indexOf('};', start) + 2);
+})();
+const CST_AT = (nowMs) => (ms) => new Date((ms === undefined ? nowMs : Number(ms)) + 8 * 3600 * 1000);
+const prevDayOf = new Function(PREV_DAY_SRC + 'return prevDayOf;')();
+function autoTick(S, nowMs) {
   let fires = 0, captured = null;
   const timerSvc = { interval: (cb) => { captured = cb; return null; } };
-  const fn = new Function('timerSvc', 'S', 'checkBusy', 'checkCtx', 'cstDay', 'cstHM', 'saveState', 'triggerRound', 'noteError',
+  const fn = new Function('timerSvc', 'S', 'checkBusy', 'checkCtx', 'cstDay', 'cstHM', 'prevDayOf', 'saveState', 'triggerRound', 'noteError',
     chunk('const offTick = timerSvc.interval(() => {', '}, 30000);') + '}, 30000); return offTick;');
-  fn(timerSvc, S, async () => {}, async () => {}, () => day, () => hm, async () => {}, () => { fires += 1; return { ok: true }; }, () => {});
+  fn(timerSvc, S, async () => {}, async () => {}, (ms) => CST_AT(nowMs)(ms).toISOString().slice(0, 10),
+    (ms) => CST_AT(nowMs)(ms).toISOString().slice(11, 16), prevDayOf, async () => {},
+    () => { fires += 1; return { ok: true }; }, () => {});
   captured();
   return fires;
 }
+const AT = (iso) => Date.parse(iso);
 {
  // 09-20 真实字段值：auto=true / autoTime=23:30 / collectDay=2026-09-20 / autoFiredDay=''
  //   旧代码在这里回 0 次（被 collectDay 拦掉），修好后必须触发 1 次。
  const S = { auto: true, autoTime: '23:30', busy: false, collectDay: '2026-09-20', autoFiredDay: '' };
- record('H09_auto_not_cancelled_by_manual_round', 1, autoTick(S, '2026-09-20', '23:30'));
- record('H10_auto_dedup_by_autoFiredDay', 0, autoTick({ auto: true, autoTime: '23:30', busy: false, collectDay: '2026-09-19', autoFiredDay: '2026-09-20' }, '2026-09-20', '23:31'));
- record('H11_auto_waits_until_autoTime', 0, autoTick({ auto: true, autoTime: '23:30', busy: false, collectDay: '2026-09-20', autoFiredDay: '' }, '2026-09-21', '00:50'));
+ record('H09_auto_not_cancelled_by_manual_round', 1, autoTick(S, AT('2026-09-20T23:30:00+08:00')));
+ // 已经在"最近这个应跑时刻"之后跑过 ⇒ 不欠（旧判据看 autoFiredDay，现在看上次成功的时刻）
+ record('H10_auto_dedup_by_last_success', 0,
+   autoTick({ auto: true, autoTime: '23:30', busy: false, autoLastOkAt: AT('2026-09-20T23:31:00+08:00') },
+     AT('2026-09-20T23:31:00+08:00')));
+ // 刚跑过 80 分钟、还没跨过下一个 23:30 ⇒ 不欠
+ record('H11_auto_not_due_before_next_boundary', 0,
+   autoTick({ auto: true, autoTime: '23:30', busy: false, autoLastOkAt: AT('2026-09-20T23:30:00+08:00') },
+     AT('2026-09-21T00:50:00+08:00')));
+ // A99 的核心：**宿主整晚没开**（09-30 23:30 时进程不在）⇒ 次日 14:00 一起来就该补跑
+ record('H33_missed_night_fires_on_next_start', 1,
+   autoTick({ auto: true, autoTime: '23:30', busy: false, autoLastOkAt: AT('2026-09-28T23:30:21+08:00') },
+     AT('2026-10-01T14:00:00+08:00')));
+ // 从没跑过 ⇒ 立刻跑（首次启用）
+ record('H34_never_ran_fires_immediately', 1,
+   autoTick({ auto: true, autoTime: '23:30', busy: false }, AT('2026-10-01T09:00:00+08:00')));
 }
 {
  // A21（2026-09-22）：**未交付的轮要能自动补跑**。实测 2026-09-21 23:30 那轮请求过但没交付
@@ -84,13 +107,13 @@ function autoTick(S, day, hm) {
  //   `auto:false` 也要补 —— 它是"把已请求的那一轮做完"，不是"新起一轮"。
  const S = { auto: false, autoTime: '23:30', busy: false, autoFiredDay: '2026-09-21', resumeCount: 0,
              pendingCollect: { day: '2026-09-21', at: Date.now() - 11 * 60 * 1000 } };
- record('H12_undelivered_round_resumes', 1, autoTick(S, '2026-09-22', '10:30'));
+ record('H12_undelivered_round_resumes', 1, autoTick(S, AT('2026-09-22T10:30:00+08:00')));
  // 上限 3 次：已经补过 3 次就不再补（避免无限重试）
  record('H13_resume_capped_at_3', 0, autoTick({ auto: false, busy: false, resumeCount: 3, autoFiredDay: '2026-09-21',
-             pendingCollect: { day: '2026-09-21', at: Date.now() - 11 * 60 * 1000 } }, '2026-09-22', '10:30'));
+             pendingCollect: { day: '2026-09-21', at: Date.now() - 11 * 60 * 1000 } }, AT('2026-09-22T10:30:00+08:00')));
  // 刚触发不到 10 分钟 ⇒ 不补（否则会和正常那一轮打架）
  record('H14_resume_waits_10min', 0, autoTick({ auto: false, busy: false, resumeCount: 0, autoFiredDay: '2026-09-21',
-             pendingCollect: { day: '2026-09-22', at: Date.now() - 60 * 1000 } }, '2026-09-22', '10:30'));
+             pendingCollect: { day: '2026-09-22', at: Date.now() - 60 * 1000 } }, AT('2026-09-22T10:30:00+08:00')));
 }
 {
  // A22（2026-09-22）：**读出"主 agent 正在等你回答的提问"**。
@@ -298,55 +321,55 @@ function loadStateWith(S, files, stateFile, stateOld, saveCalls) {
 //   （`pendingCollect`/`busy`/`note` 全是旧值、目标会话从未被唤醒），错只进了内存里的 `lastError`。
 //   修法：入队成功（triggerRound 回 ok）才写 `autoFiredDay`；失败退避重试（10 分钟、同日最多 3 次）
 //   并把原文写进 `lastTriggerError`。下面四条把这三件事钉住。
-async function autoTickState(S, day, hm, triggerImpl) {
+async function autoTickState(S, nowMs, triggerImpl) {
   let captured = null;
   const timerSvc = { interval: (cb) => { captured = cb; return null; } };
-  const fn = new Function('timerSvc', 'S', 'checkBusy', 'checkCtx', 'cstDay', 'cstHM', 'saveState', 'triggerRound', 'noteError',
+  const fn = new Function('timerSvc', 'S', 'checkBusy', 'checkCtx', 'cstDay', 'cstHM', 'prevDayOf', 'saveState', 'triggerRound', 'noteError',
     chunk('const offTick = timerSvc.interval(() => {', '}, 30000);') + '}, 30000); return offTick;');
-  fn(timerSvc, S, async () => {}, async () => {}, () => day, () => hm, async () => {}, triggerImpl, () => {});
+  fn(timerSvc, S, async () => {}, async () => {}, (ms) => CST_AT(nowMs)(ms).toISOString().slice(0, 10),
+    (ms) => CST_AT(nowMs)(ms).toISOString().slice(11, 16), prevDayOf, async () => {}, triggerImpl, () => {});
   captured();
   await new Promise((r) => setTimeout(r, 0));    // 让 then/catch 跑完
   return S;
 }
 {
-  // ① 派发失败 ⇒ **不消费今天**（否则之后每次 tick 都被 autoFiredDay 跳过，这一晚永久作废）
+  // ① 派发失败 ⇒ **不记账**（否则之后每次 tick 都认为"已经跑过"，这一笔欠账永久作废）
   let n1 = 0;
-  const failed = await autoTickState({ auto: true, autoTime: '23:30', busy: false, autoFiredDay: '' },
-    '2026-09-29', '23:30', () => { n1 += 1; return { ok: false, error: 'collect-prompt: 会话不可用' } });
-  record('H28_failed_fire_does_not_consume_the_day',
-    { fired: 1, autoFiredDay: '', tries: 1, retryScheduled: true, errorKept: true, noteSaysFailed: true },
-    { fired: n1, autoFiredDay: failed.autoFiredDay || '', tries: failed.autoFireRetryTries,
+  const failed = await autoTickState({ auto: true, autoTime: '23:30', busy: false },
+    AT('2026-09-29T23:30:00+08:00'), () => { n1 += 1; return { ok: false, error: 'collect-prompt: 会话不可用' } });
+  record('H28_failed_fire_does_not_count_as_run',
+    { fired: 1, autoLastOkAt: 0, tries: 1, retryScheduled: true, errorKept: true, noteSaysFailed: true },
+    { fired: n1, autoLastOkAt: failed.autoLastOkAt || 0, tries: failed.autoFireRetryTries,
       retryScheduled: failed.autoFireRetryAt > Date.now(),
       errorKept: String(failed.lastTriggerError || '').indexOf('会话不可用') >= 0,
       noteSaysFailed: String(failed.note || '').indexOf('自动触发失败') >= 0 });
-  // ② 入队成功才写 autoFiredDay，并把退避计数清零
+  // ② 入队成功才记账（autoLastOkAt），并把退避计数清零
   let n2 = 0;
-  const okd = await autoTickState({ auto: true, autoTime: '23:30', busy: false, autoFiredDay: '',
-    autoFireRetryDay: '2026-09-29', autoFireRetryAt: Date.now() - 1, autoFireRetryTries: 2 }, '2026-09-29', '23:30',
+  const okd = await autoTickState({ auto: true, autoTime: '23:30', busy: false, autoFireDueKey: '2026-09-29 23:30',
+    autoFireRetryAt: Date.now() - 1, autoFireRetryTries: 2 }, AT('2026-09-29T23:30:00+08:00'),
     () => { n2 += 1; return { ok: true } });
-  record('H29_successful_fire_consumes_the_day',
-    { fired: 1, autoFiredDay: '2026-09-29', tries: 0, retryAt: 0 },
-    { fired: n2, autoFiredDay: okd.autoFiredDay, tries: okd.autoFireRetryTries, retryAt: okd.autoFireRetryAt });
+  record('H29_successful_fire_is_recorded',
+    { fired: 1, ran: true, autoFiredDay: '2026-09-29', tries: 0, retryAt: 0 },
+    { fired: n2, ran: okd.autoLastOkAt > 0, autoFiredDay: okd.autoFiredDay, tries: okd.autoFireRetryTries, retryAt: okd.autoFireRetryAt });
   // ③ 退避窗口内不再扣扳机（10 分钟内最多一次）
   let n3 = 0;
-  await autoTickState({ auto: true, autoTime: '23:30', busy: false, autoFiredDay: '',
-    autoFireRetryDay: '2026-09-29', autoFireRetryAt: Date.now() + 5 * 60 * 1000, autoFireRetryTries: 1 }, '2026-09-29', '23:35',
+  await autoTickState({ auto: true, autoTime: '23:30', busy: false, autoFireDueKey: '2026-09-29 23:30',
+    autoFireRetryAt: Date.now() + 5 * 60 * 1000, autoFireRetryTries: 1 }, AT('2026-09-29T23:35:00+08:00'),
     () => { n3 += 1; return { ok: true } });
   record('H30_retry_backoff_blocks_refire', 0, n3);
-  // ④ 同一天试满 3 次就停（不再每 30 秒撞一次）
+  // ④ 同一笔欠账试满 3 次就停（不再每 30 秒撞一次）
   let n4 = 0;
-  const capped = await autoTickState({ auto: true, autoTime: '23:30', busy: false, autoFiredDay: '',
-    autoFireRetryDay: '2026-09-29', autoFireRetryAt: 0, autoFireRetryTries: 3,
-    lastTriggerError: 'collect-prompt: 会话不可用' }, '2026-09-29', '23:59',
+  const capped = await autoTickState({ auto: true, autoTime: '23:30', busy: false, autoFireDueKey: '2026-09-29 23:30',
+    autoFireRetryAt: 0, autoFireRetryTries: 3, lastTriggerError: 'collect-prompt: 会话不可用' }, AT('2026-09-29T23:59:00+08:00'),
     () => { n4 += 1; return { ok: true } });
   record('H31_auto_gives_up_after_3_failures', { fired: 0, whyMentions: true },
-    { fired: n4, whyMentions: String(capped.autoWhy || '').indexOf('失败 3 次') >= 0 });
-  // ⑤ 跨过零点 ⇒ 退避计数归零（否则第二天一上来就被"已失败 3 次"卡死，永远不跑）
+    { fired: n4, whyMentions: String(capped.autoWhy || '').indexOf('已失败 3 次') >= 0 });
+  // ⑤ 跨过下一个 23:30 ⇒ 换了"应跑时刻"，退避计数归零、重新扣扳机
   let n5 = 0;
-  await autoTickState({ auto: true, autoTime: '23:30', busy: false, autoFiredDay: '2026-09-29',
-    autoFireRetryDay: '2026-09-29', autoFireRetryAt: 0, autoFireRetryTries: 3 }, '2026-09-30', '23:30',
+  await autoTickState({ auto: true, autoTime: '23:30', busy: false, autoFireDueKey: '2026-09-29 23:30',
+    autoFireRetryAt: 0, autoFireRetryTries: 3 }, AT('2026-09-30T23:30:00+08:00'),
     () => { n5 += 1; return { ok: true } });
-  record('H32_retry_counter_resets_on_a_new_day', 1, n5);
+  record('H32_retry_counter_resets_on_next_boundary', 1, n5);
 }
 const failures = results.filter((r) => !r.pass)
 console.log(JSON.stringify({ total: results.length, passed: results.length - failures.length, failures }, null, 2))

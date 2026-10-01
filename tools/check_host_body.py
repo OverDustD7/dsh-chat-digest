@@ -156,10 +156,15 @@ for frag in ("const DIR =", "const WAKE_TEXT =", "apply(ctx)",
              "路径不被允许", "fsSvc.readBytes",
              # A19（2026-09-21 用户报「启用了自动今天却没有自动」）：自动 tick 的去重判据里
              #   **不能有 collectDay**（它是"上次采到哪天"的游标；手工/菜单早上跑过一轮就会把它写成今天
-             #   ⇒ 当晚的自动轮被静默取消）。"今天自动跑过没"只认 autoFiredDay；并把每次 tick 的结论
-             #   写进 `S.autoWhy` 由 `/state` 回显（此前没有任何一处能看出"为什么没自动"）。
-             "autoWhy", "只有一个判据：`autoFiredDay`", "S.autoFiredDay === day",
+             #   ⇒ 当晚的自动轮被静默取消）；并把每次 tick 的结论写进 `S.autoWhy` 由 `/state` 回显。
+             # A99（2026-10-01 用户定案口径）：判据再收一次 —— **Auto ＝「过了 auto 时间还没跑过就立刻跑」**，
+             #   所以"今天跑过没（autoFiredDay）"不再参与判定，改成比"最近一个应跑时刻 vs 上次成功跑过的时刻"。
+             #   钉住三样：应跑时刻怎么算、上次成功怎么记、失败怎么退避。
+             "autoWhy", "const dueDay = (hm >= S.autoTime) ? day : prevDayOf(day)",
+             "const dueKey = dueDay + ' ' + S.autoTime", "const lastOkKey = lastOkMs",
+             "S.autoLastOkAt = Date.now()", "S.autoFireRetryAt = Date.now() + 10 * 60 * 1000",
              "note: String(S.note || '')", "autoFiredAt", "autoWhy: S.autoWhy || ''",
+             "lastTriggerError",
              # A20（2026-09-21 用户纠正「我点击后会在浏览器又下载一遍」「最好所有文件都用本机默认应用打开吧」）：
              #   `file:` 链接改为 POST `/api/open` → 宿主用 `ctx.subprocess` 起 `cmd /c start "" "<绝对路径>"`，
              #   交给该扩展名的默认应用；闸门与 `/api/file` 同一套（信任栅栏 + 允许根 + 必须真实存在）。

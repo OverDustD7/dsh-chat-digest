@@ -154,13 +154,15 @@ const S = {
   //   由 `/state` 回显 —— 用户问「启用了自动今天却没有自动」时必须能一眼看出卡在哪一条判据上。
   //   A98（2026-10-01）：**它现在也落盘**（原来只在内存 ⇒ 重启后"昨晚卡在哪"就查不出来了）。
   autoWhy: '', autoFiredAt: 0,
-  // A98（2026-10-01 用户问"凭什么 9-29 没跑"）：**自动触发的失败必须留痕、且不许白烧一天**。
-  //   现场：09-29 23:30 那一枪打空了（`autoFiredDay` 落盘成 09-29，而 `pendingCollect`/`busy`/`note`
-  //   全是旧值、目标会话从未被唤醒），错只进了内存里的 `lastError` ⇒ 宿主一重启原文就没了。
-  //   `autoFireRetryAt/autoFireRetryTries/autoFireRetryDay`＝失败后的退避（10 分钟一次、最多 3 次，
-  //   **按天计数**：跨过零点就归零，否则新的一天一上来就被"已失败 3 次"卡死）；
+  // A98/A99（2026-10-01）：**自动的判据只看"欠不欠"** —— 用户定案的口径是
+  //   「过了 auto 时间还没跑过 auto，就立刻跑」。所以不再用"今天跑过没（autoFiredDay === day）"＋
+  //   "没到点不跑"这两条，而是比 **最近一个该跑的时刻（dueKey）** 与 **上次成功跑过的时刻**：
+  //   `autoLastOkAt`＝上次"自动"成功入队的时刻（手动轮不算）；
+  //   `autoFireDueKey`＝当前这笔欠账的应跑时刻；`autoFireRetryAt/autoFireRetryTries`＝
+  //   失败后的退避（10 分钟一次、最多 3 次，**换了应跑时刻就重新开始**）；
   //   `lastTriggerError/At`＝最近一次"派发一轮"失败的原文（自动与手动共用，落盘）。
-  autoFireRetryAt: 0, autoFireRetryTries: 0, autoFireRetryDay: '', lastTriggerError: '', lastTriggerErrorAt: 0,
+  autoFireRetryAt: 0, autoFireRetryTries: 0, autoFireDueKey: '', autoLastOkAt: 0,
+  lastTriggerError: '', lastTriggerErrorAt: 0,
   // 「用默认应用打开」（A20）最近一次的结果 —— 只在内存里，供 `/state` 自证
   lastOpenAt: 0, lastOpenPath: '', lastOpenOk: null, lastOpenHow: '',
   // A22：主 agent 未回答的提问（`/state.pendingAsk`，面板会显示）；A21：未交付轮的补跑计数
@@ -297,7 +299,7 @@ return {
             note: String(S.note || ''), autoFiredAt: Number(S.autoFiredAt || 0),
             // A98：自动"为什么没跑/为什么没触发成"要跨重启活下来（含失败退避与失败原文）
             autoWhy: String(S.autoWhy || ''), autoFireRetryAt: Number(S.autoFireRetryAt || 0), autoFireRetryTries: Number(S.autoFireRetryTries || 0),
-            autoFireRetryDay: String(S.autoFireRetryDay || ''),
+            autoFireDueKey: String(S.autoFireDueKey || ''), autoLastOkAt: Number(S.autoLastOkAt || 0),
             lastTriggerError: String(S.lastTriggerError || ''), lastTriggerErrorAt: Number(S.lastTriggerErrorAt || 0),
             ctxAuto: S.ctxAuto, ctxRatio: S.ctxRatio, ctxFallback: S.ctxFallback, ctxCooldownMs: S.ctxCooldownMs,
             ctxTokens: S.ctxTokens, ctxWindow: S.ctxWindow, ctxLimit: S.ctxLimit, ctxPct: S.ctxPct,
@@ -440,7 +442,8 @@ return {
           if (j && typeof j.autoWhy === 'string') S.autoWhy = j.autoWhy;
           if (j && Number.isFinite(Number(j.autoFireRetryAt))) S.autoFireRetryAt = Number(j.autoFireRetryAt) || 0;
           if (j && Number.isFinite(Number(j.autoFireRetryTries))) S.autoFireRetryTries = Number(j.autoFireRetryTries) || 0;
-          if (j && typeof j.autoFireRetryDay === 'string') S.autoFireRetryDay = j.autoFireRetryDay;
+          if (j && typeof j.autoFireDueKey === 'string') S.autoFireDueKey = j.autoFireDueKey;
+          if (j && Number.isFinite(Number(j.autoLastOkAt))) S.autoLastOkAt = Number(j.autoLastOkAt) || 0;
           if (j && typeof j.lastTriggerError === 'string') S.lastTriggerError = j.lastTriggerError;
           if (j && Number.isFinite(Number(j.lastTriggerErrorAt))) S.lastTriggerErrorAt = Number(j.lastTriggerErrorAt) || 0;
           if (j && typeof j.seeded === 'boolean') S.seeded = j.seeded;
@@ -1283,6 +1286,11 @@ const AGENT_PRESET = (typeof CF.agentPreset === 'string') ? CF.agentPreset : '';
       const cst = (ms) => new Date((ms === undefined ? Date.now() : ms) + 8 * 3600 * 1000);
       const cstDay = (ms) => cst(ms).toISOString().slice(0, 10);
       const cstHM = (ms) => cst(ms).toISOString().slice(11, 16);
+      //: 前一天（A99：算"最近一个该跑的 23:30"用）。**只吃日期串**、不碰本机时区（纯 UTC 算术）。
+      const prevDayOf = (d) => {
+        const t = Date.parse(String(d) + 'T00:00:00Z');
+        return Number.isFinite(t) ? new Date(t - 86400000).toISOString().slice(0, 10) : String(d);
+      };
 
       // ── 通用缺省轮次提示词（发布版）──────────────────────────────────────────────
 // 部署方放 `local/round.md` 覆盖（支持 `{date}` / `{mode}` 占位符）。
@@ -1956,26 +1964,35 @@ const roundPromptLive = async (date, reason, since, mode) => {
             //   于是当晚 23:30 的 tick 命中 `S.collectDay === day` 直接跳过：
             //   `autoFiredDay` 始终为空、服务器 21:20 起一直活着、23:30 那一轮从没发生。
             //   "今天自动跑过没"**只有一个判据：`autoFiredDay`**。
-            if (S.autoFiredDay === day) { S.autoWhy = '今天已自动跑过（autoFiredDay=' + day + '）'; return; }
-            // 退避计数**按天算**：跨过零点归零（否则第二天一上来就撞上"已失败 3 次"而永远不跑）
-            if (S.autoFireRetryDay !== day) { S.autoFireRetryDay = day; S.autoFireRetryTries = 0; S.autoFireRetryAt = 0; }
-            if (hm < S.autoTime) { S.autoWhy = '未到点：现在 ' + hm + ' < autoTime ' + S.autoTime; return; }
-            // A98（2026-10-01 用户问"凭什么 9-29 没跑"）：**打空不许再烧掉一整天**。
-            //   现场：09-29 23:30 那一枪把 `autoFiredDay` 落了盘，而派发在"提示词入队"之前就失败
-            //   （`pendingCollect`/`busy`/`note` 全是 09-28 的旧值、目标会话从未被唤醒，错只进了内存）。
-            //   现在两条：① **入队成功（triggerRound 回 ok）才写 `autoFiredDay`**，失败就退避重试
-            //   （10 分钟一次、同日最多 3 次）；② 失败原文写进 `lastTriggerError` 并落盘 ——
-            //   `noteError` 只进内存，宿主一重启就查不出来了（这正是 09-29 查不出的原因）。
+            // A99（2026-10-01 用户定案的口径）：**Auto ＝「过了 auto 时间还没跑过 auto，就立刻跑」**。
+            //   旧判据是「今天跑过没（`autoFiredDay === day`）」＋「没到点不跑」⇒ 宿主那晚不在就**漏掉整晚**
+            //   而且次日起来也不算欠账（09-30 那晚就是：23:30 时进程不在 ⇒ 没有 tick ⇒ 什么都没发生）。
+            //   新判据只有一件事：**上一次成功跑过的 auto 时刻** 早于 **最近那个应跑时刻** ⇒ 立刻跑。
+            //   `dueKey` 用 CST 的 'YYYY-MM-DD HH:MM' 拼串，字典序比较即可（别用 Date，跨时区会歪）。
+            const dueDay = (hm >= S.autoTime) ? day : prevDayOf(day);
+            const dueKey = dueDay + ' ' + S.autoTime;
+            const lastOkMs = Number(S.autoLastOkAt) || 0;
+            const lastOkKey = lastOkMs ? (cstDay(lastOkMs) + ' ' + cstHM(lastOkMs)) : '';
+            if (lastOkKey && lastOkKey >= dueKey) {
+              S.autoWhy = '不欠：上次自动已跑（' + lastOkKey + '）≥ 最近应跑（' + dueKey + '）';
+              return;
+            }
+            // 退避按"这一笔欠账"计：换了应跑时刻（跨过下一个 23:30）就重新开始
+            if (S.autoFireDueKey !== dueKey) { S.autoFireDueKey = dueKey; S.autoFireRetryTries = 0; S.autoFireRetryAt = 0; }
+            // A98：**打空不许再烧掉一整天**。失败退避 10 分钟重试、同一笔欠账最多 3 次；
+            //   原文写进 `lastTriggerError` 并落盘（`noteError` 只进内存，宿主一重启就查不出来）。
             if (S.autoFireRetryAt && Date.now() < S.autoFireRetryAt) {
               S.autoWhy = '上次触发失败 ⇒ ' + Math.max(1, Math.round((S.autoFireRetryAt - Date.now()) / 60000))
                         + ' 分钟后重试（已试 ' + (Number(S.autoFireRetryTries) || 0) + ' 次）';
               return;
             }
             if ((Number(S.autoFireRetryTries) || 0) >= 3) {
-              S.autoWhy = '今天自动已失败 3 次，停（原文见 lastTriggerError：' + String(S.lastTriggerError || '').slice(0, 40) + '）';
+              S.autoWhy = '这笔欠账（' + dueKey + '）已失败 3 次，停（原文见 lastTriggerError：'
+                        + String(S.lastTriggerError || '').slice(0, 40) + '）';
               return;
             }
-            S.autoWhy = '已触发（' + day + ' ' + hm + '，autoTime=' + S.autoTime + '）';
+            S.autoWhy = '欠账 ⇒ 触发（最近应跑 ' + dueKey + '，上次成功 ' + (lastOkKey || '无')
+                      + '，现在 ' + day + ' ' + hm + '）';
             S.autoFiredAt = Date.now();
             saveState();
             const autoFireFail = (why) => {
@@ -1990,13 +2007,16 @@ const roundPromptLive = async (date, reason, since, mode) => {
             };
             Promise.resolve(triggerRound('auto')).then((r) => {
               if (r && r.ok) {
-                S.autoFiredDay = day; S.autoFireRetryAt = 0; S.autoFireRetryTries = 0;
+                // 成功入队才记账：`autoLastOkAt` 是"上次成功跑过 auto"的唯一判据（决定下次欠不欠）；
+                // `autoFiredDay` 只留给面板/`/state` 看，不再参与判定。
+                S.autoLastOkAt = Date.now(); S.autoFiredDay = day;
+                S.autoFireRetryAt = 0; S.autoFireRetryTries = 0;
                 S.autoWhy = '已触发并入队（' + day + ' ' + hm + '）';
                 saveState();
                 return;
               }
-              // 撞上"另一轮刚起来"不算失败：不消费今天、不占退避次数，下次 tick 再看
-              if (r && r.busy) { S.autoWhy = '上一轮刚起来（' + String(r.error || '') + '）⇒ 不消费今天，下次 tick 再看'; return; }
+              // 撞上"另一轮刚起来"不算失败：不记账、不占退避次数，下次 tick 再看
+              if (r && r.busy) { S.autoWhy = '上一轮刚起来（' + String(r.error || '') + '）⇒ 不记账，下次 tick 再看'; return; }
               autoFireFail((r && r.error) || 'triggerRound 回了 ok:false');
             }).catch((e) => autoFireFail((e && e.message) || String(e)));
           } catch (e) { noteError('auto-tick', e); S.autoWhy = 'tick 抛错：' + String((e && e.message) || e).slice(0, 60); saveState(); }
@@ -2033,6 +2053,7 @@ const roundPromptLive = async (date, reason, since, mode) => {
         autoWhy: S.autoWhy || '', autoRetry: S.autoRetry !== false, retryCount: Number(S.retryCount || 0),
         // A98：自动失败的现场（退避到什么时候、试了几次、上一次派发失败的原话）
         autoFireRetryAt: Number(S.autoFireRetryAt || 0), autoFireRetryTries: Number(S.autoFireRetryTries || 0),
+        autoFireDueKey: String(S.autoFireDueKey || ''), autoLastOkAt: Number(S.autoLastOkAt || 0),
         lastTriggerError: String(S.lastTriggerError || ''), lastTriggerErrorAt: Number(S.lastTriggerErrorAt || 0),
         busyFor: String(S.busyFor || ''), autoFiredAt: Number(S.autoFiredAt || 0),
         pendingCollect: S.pendingCollect
