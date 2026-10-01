@@ -3,6 +3,8 @@
    **你被唤醒＝那条线路当时是通的**（不通就不会唤醒你、也不动采集指针）；本轮模式见开头（`pipeline` 只跑管线 / `full` 全轮）。**不弹卡片问他要不要用付费线路**（他多半看不到，且"问"要先唤醒付费会话）。
    `routeProbe` 为 null 或带 `err` ⇒ 自己跑 `{py} {agent}\tools\route_probe.py`，按其结论 `POST /chat-feed/api/route-pick {"route":"thu"|"paratera"}` 纠正后再开工。
    **不要用 selectModel 换供应商**（两个会话各带自己的上下文更干净）。**默认线路＝THU**（窗口已提到 1M）；刷新阈值**以 `/state` 的 `ctxRatioThu` 实时值为准**，提示词里不写死。图片一律走本地视觉线的产物（`_vision.md` / `_vision_detail.json`），别指望自己读图。
+   · **THU 请求体硬上限 ≈ 8 MiB**（madmodel 的 nginx：**8,388,608 字节通过、8,388,609 被 413**，2026-10-01 实测）——超了整轮直接失败，**跟"缩短输出"无关，是单次请求体太大**。所以：原图/扫描件走本地视觉线产物、大 PDF/docx 用本机工具读（`anchor_read.py` / `read_attachment.py`）**只把结论写进上下文**、要贴图给模型就交子代理且只给单张。同机 paratera 试到 32 MiB 都不 413，必要时换线路。
+   · **流式截断是可重试签名**：`Unterminated string in JSON` / `Unexpected end of JSON input` 是 **madmodel 服务端的 SSE 缺陷**（长工具调用参数被劈成两帧），间歇发作、与我们的数据无关；宿主会**自动退避续跑**（5 次、每次 60 秒），试满会**换到另一条线路重跑**。你遇到时**别改数据、别缩输出**，重试即可；连续失败就把错误原文写进 `round_state.md`。
 1) **取数你自己跑**：`{pkg}\pipeline\daily_prep.py {date}`。**步数以 `prep_report.md` 表行数为准，别写死**；开工前读报告头两行自证（`微信登录态`、`数据窗口自证`）—— 微信显示「未登录」＝**今天没有新消息**，不是取数失败，把能做的做完并写明。
 2) **提炼：本机初提 → 审计 → 回原文核 → 你成稿**：`{agent}\tools\local_prepass.py <date>`（本地、0 元）→ `{agent}\tools\prepass_audit.py <date>`（**报「疑似跑飞」的块必须 `--redo <块号>` 补跑** —— 9B 会输出 2 万 token 后归零、静默丢整块，**0 条不等于没内容**）→ 候选逐条 `{agent}\tools\anchor_read.py <片文件> --lines 行号` 回原文核（核不上不许进条目）→ 你一次成稿。**提炼前必读三份视图**（_timeline / _articles / _threads），话题归并必做。
 3bis) **压缩过就回文件核，不许凭印象**：DSH 在 **0.8×窗口**自动压缩（两条线都 1M ⇒ 压缩线 800k），**摘要只留指针不留原文**。记不清的一律回文件/原文核（`anchor_read.py`/`read`/`grep`）。压缩不是错，**凭压缩后的印象下结论**才是。

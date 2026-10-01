@@ -24,8 +24,69 @@ function chunk(a,b){const start=body.indexOf(a), end=body.indexOf(b,start+a.leng
 function record(id, expected, actual){results.push({id,expected,actual,pass:JSON.stringify(expected)===JSON.stringify(actual)});}
 {
  const S={busy:true,busyFor:'test-session',busySawOpen:true,busyBase:0,autoRetry:true,retryCount:0};let prompts=0;
- const check=new Function('S','ctx','turnState','turnEnds','saveState','checkCtx','cstHM','noteError','FAKE_SIGNAL',chunk('const checkBusy = async () => {','// 自动：')+'return checkBusy;')(S,{get:()=>({prompt:async()=>prompts++})},async()=>({open:false,ends:1,lastReason:'error'}),async()=>1,async()=>{},async()=>{},()=>'',()=>{},{});
+ const check=new Function('S','ctx','turnState','turnEnds','saveState','checkCtx','cstHM','noteError','FAKE_SIGNAL',
+   'routeOfActive','triggerRound',chunk('const checkBusy = async () => {','// 自动：')+'return checkBusy;')(
+   S,{get:()=>({prompt:async()=>prompts++})},async()=>({open:false,ends:1,lastReason:'error'}),async()=>1,
+   async()=>{},async()=>{},()=>'',()=>{},{},()=> 'thu',()=>({ok:true}));
  await check();record('H01_error_auto_retry',1,prompts);
+}
+// A102（2026-10-01，另一会话在 madmodel 侧定案）：**流式截断签名**（`Unterminated string in JSON` /
+//   `Unexpected end of JSON input`）＝ 服务端把长工具调用参数的事件体劈成两帧，间歇发作。
+//   现场：本会话 17:13:30–17:32:54 **6 连败全是这个签名**（`rpcId: retry-*` 说明是插件在续跑），
+//   17:35 自己就过了；而老代码**没有退避**（间隔 3s–4min）、也不认签名。
+//   下面五条把新行为钉住：认签名并落盘 / 退避 60 秒 / 退避窗口内不打扰 / 试满换线路 / 普通错误维持老行为。
+async function busyProbe(S, turnStateImpl) {
+  const prompts = [], triggers = [];
+  const src = chunk('const checkBusy = async () => {', '// 自动：') + 'return checkBusy;';
+  const fn = new Function('S','ctx','turnState','turnEnds','saveState','checkCtx','cstHM','noteError','FAKE_SIGNAL',
+    'routeOfActive','triggerRound', src);
+  const cb = fn(S, { get: () => ({ prompt: async (p) => { prompts.push(p) } }) }, turnStateImpl,
+    async () => 7, async () => {}, async () => {}, () => '18:00', () => {}, {},
+    () => 'thu', (reason, opts) => { triggers.push({ reason, opts }); return { ok: true } });
+  await cb();                      // ← 构造出来的是"装着 checkBusy 的工厂"，必须真的调一次
+  return { prompts, triggers };
+}
+const FLAKY = 'Unterminated string in JSON at position 4705 (line 1 column 4706)';
+const stFlaky = async () => ({ open: false, ends: 7, lastReason: 'error', lastErrorMsg: FLAKY });
+{
+  const S = { busy: true, busyFor: 'sess-1', busySawOpen: true, busyBase: 0, autoRetry: true, retryCount: 0 };
+  const r = await busyProbe(S, stFlaky);
+  record('H36_flaky_stream_signature_is_recorded_and_backed_off',
+    { prompts: 1, flakyCount: 1, backoffMs: 60000, kept: true, retryTextMentionsStream: true },
+    { prompts: r.prompts.length, flakyCount: S.streamFlakyCount,
+      backoffMs: S.retryAt - Date.now() > 55000 && S.retryAt - Date.now() <= 60000 ? 60000 : (S.retryAt - Date.now()),
+      kept: String(S.lastStreamError).indexOf('Unterminated string') === 0 && (S.streamErrors || []).length === 1,
+      retryTextMentionsStream: String((r.prompts[0] || {}).content?.[0]?.text || '').indexOf('流式截断') >= 0 });
+}
+{
+  const S = { busy: true, busyFor: 'sess-1', busySawOpen: true, busyBase: 0, autoRetry: true, retryCount: 2,
+              retryAt: Date.now() + 45 * 1000 };
+  const r = await busyProbe(S, stFlaky);
+  record('H37_backoff_window_does_not_pester_the_session',
+    { prompts: 0, stillBusy: true, noteMentionsWait: true },
+    { prompts: r.prompts.length, stillBusy: S.busy === true, noteMentionsWait: String(S.note || '').indexOf('退避中') >= 0 });
+}
+{
+  const S = { busy: true, busyFor: 'sess-1', busySawOpen: true, busyBase: 0, autoRetry: true, retryCount: 5 };
+  const r = await busyProbe(S, stFlaky);
+  record('H38_exhausted_flaky_degrades_to_the_other_route',
+    { prompts: 0, fired: 1, route: 'paratera', noteMentionsRoute: true },
+    { prompts: r.prompts.length, fired: r.triggers.length, route: (r.triggers[0] || {}).opts?.probeRoute,
+      noteMentionsRoute: String(S.note || '').indexOf('换线路') >= 0 });
+}
+{
+  // 普通错误（非该签名）：**老行为一字不变** —— cap 3、不退避、续跑文本就是「继续」
+  const S = { busy: true, busyFor: 'sess-1', busySawOpen: true, busyBase: 0, autoRetry: true, retryCount: 0 };
+  const r = await busyProbe(S, async () => ({ open: false, ends: 3, lastReason: 'error',
+    lastErrorMsg: 'Stream ended without finish_reason' }));
+  record('H39_other_errors_keep_the_old_retry_behaviour',
+    { prompts: 1, retryAt: 0, text: '继续', flakyCount: 0 },
+    { prompts: r.prompts.length, retryAt: Number(S.retryAt || 0), text: (r.prompts[0] || {}).content?.[0]?.text,
+      flakyCount: Number(S.streamFlakyCount || 0) });
+  const S2 = { busy: true, busyFor: 'sess-1', busySawOpen: true, busyBase: 0, autoRetry: true, retryCount: 3 };
+  const r2 = await busyProbe(S2, async () => ({ open: false, ends: 3, lastReason: 'error', lastErrorMsg: 'x' }));
+  record('H40_other_errors_stop_after_three', { prompts: 0, fired: 0 },
+    { prompts: r2.prompts.length, fired: r2.triggers.length });
 }
 {
  const S={items:[{id:'demo'}]},fsSvc={resolve:async x=>x,readText:async()=>JSON.stringify({items:[]})};
@@ -319,11 +380,12 @@ function loadStateWith(S, files, stateFile, stateOld, saveCalls) {
   const mk = async (trusted) => {
     const S = { sessionId: 'session-OLD', sessParatera: 'session-OLD', sessThu: '', busy: false };
     const fn = new Function('S', 'ensureRouteSession', 'createRouteSession', 'retireCwdStale',
-      'cwdTrust', 'routeSlotKey', 'saveState', 'ROUTE_MODELS', src);
+      'cwdTrust', 'routeSlotKey', 'saveState', 'ROUTE_MODELS', 'noteRouteModel', src);
     const pick = fn(S, async (r, s) => { s.push('slot:reused:session-OLD'); return 'session-OLD' },
       async (r, s) => { s.push('created:session-NEW'); return 'session-NEW' },
       async () => 0, () => trusted, () => 'sessParatera', async () => 'saved',
-      { paratera: { provider: 'p', model: 'm' }, thu: { provider: 'p', model: 'm' } });
+      { paratera: { provider: 'p', model: 'm' }, thu: { provider: 'p', model: 'm' } },
+      async () => ({ ok: true, selected: { provider: 'p', model: 'm' } }));
     const r = await pick('paratera', 'probe:paratera 可达');
     return { r: r, S: S };
   };
