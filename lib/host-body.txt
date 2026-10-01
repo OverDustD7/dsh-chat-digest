@@ -169,6 +169,11 @@ const S = {
   pendingAsk: null, resumeCount: 0,
   // 异常退出自动续跑（2026-09-17 晚）：autoRetry 是总开关，retryCount 是本轮已续跑次数（跑完归零）
   autoRetry: true, retryCount: 0, lastRetryAt: 0,
+  // A102（2026-10-01）：**流式截断签名**（madmodel 服务端把长工具调用参数的事件体劈成两帧）——
+  //   `retryAt`＝退避到什么时候（只对那个签名生效）；`streamFlakyCount/streamErrors`＝命中次数与最近 8 条原文；
+  //   `routeModelNote/routeModelAt`＝最近一次 setRouteModel 的结果（配置里的 `routes[].model` 到底有没有被采用）。
+  retryAt: 0, streamFlakyCount: 0, lastStreamError: '', lastStreamErrorAt: 0, streamErrors: [],
+  routeModelNote: '', routeModelAt: 0,
   sessionId: '', note: '骨架版：真实采集待接入', seeded: false,
   items: DEMO_ITEMS.slice(),
   lastError: '', lastRouteError: '', lastSaveOk: true, renamedAs: '',
@@ -294,6 +299,11 @@ return {
           const payload = { schema: STATE_SCHEMA, sessionId: S.sessionId, mainSessionId: S.mainSessionId, auto: S.auto, autoTime: S.autoTime, lastCollectAt: S.lastCollectAt, seeded: S.seeded, seededFor: S.seededFor, items: S.items,
             busy: S.busy, busySince: S.busySince, busyBase: S.busyBase, busyFor: S.busyFor || '', busySawOpen: !!S.busySawOpen, lastDoneAt: S.lastDoneAt, collectDay: S.collectDay, autoFiredDay: S.autoFiredDay,
             autoRetry: S.autoRetry !== false, retryCount: Number(S.retryCount || 0), lastRetryAt: Number(S.lastRetryAt || 0),
+            // A102：流式截断签名的现场（退避时刻、命中次数、最近几条原文、setRouteModel 的结果）
+            retryAt: Number(S.retryAt || 0), streamFlakyCount: Number(S.streamFlakyCount || 0),
+            lastStreamError: String(S.lastStreamError || ''), lastStreamErrorAt: Number(S.lastStreamErrorAt || 0),
+            streamErrors: Array.isArray(S.streamErrors) ? S.streamErrors.slice(-8) : [],
+            routeModelNote: String(S.routeModelNote || ''), routeModelAt: Number(S.routeModelAt || 0),
             // A19：`note`（最近一次动作的人话）与 `autoFiredAt`（上次自动触发时刻）以前**没持久化** ⇒
             //   重启后 note 退回默认值"骨架版：真实采集待接入"，看起来像"什么都没发生过"。
             note: String(S.note || ''), autoFiredAt: Number(S.autoFiredAt || 0),
@@ -428,6 +438,14 @@ return {
           if (j && typeof j.autoRetry === 'boolean') S.autoRetry = j.autoRetry;
           if (j && Number.isFinite(Number(j.retryCount))) S.retryCount = Number(j.retryCount);
           if (j && Number.isFinite(Number(j.lastRetryAt))) S.lastRetryAt = Number(j.lastRetryAt);
+          // A102：流式截断签名的现场也要跨重启活下来（否则"昨晚为什么停"重启就查不出来）
+          if (j && Number.isFinite(Number(j.retryAt))) S.retryAt = Number(j.retryAt) || 0;
+          if (j && Number.isFinite(Number(j.streamFlakyCount))) S.streamFlakyCount = Number(j.streamFlakyCount) || 0;
+          if (j && typeof j.lastStreamError === 'string') S.lastStreamError = j.lastStreamError;
+          if (j && Number.isFinite(Number(j.lastStreamErrorAt))) S.lastStreamErrorAt = Number(j.lastStreamErrorAt) || 0;
+          if (j && Array.isArray(j.streamErrors)) S.streamErrors = j.streamErrors.slice(-8);
+          if (j && typeof j.routeModelNote === 'string') S.routeModelNote = j.routeModelNote;
+          if (j && Number.isFinite(Number(j.routeModelAt))) S.routeModelAt = Number(j.routeModelAt) || 0;
           if (j && j.lastDoneAt) S.lastDoneAt = Number(j.lastDoneAt) || 0;
           // 迁移**只认"字段不存在"**（老状态才补），**空串是有效值**（＝"今天还没采集过"，由 {at} 拨指针时显式清空）。
           // 2026-09-13 踩坑：原来写成"空串也当缺字段 → 记成今天"，于是拨完指针后任何一次 loadState（/ss、/chat…）
@@ -1362,7 +1380,7 @@ const roundPromptLive = async (date, reason, since, mode) => {
         try {
           const ins = await sc.inspect(sid || S.sessionId, FAKE_SIGNAL);
           const evs = (ins && ins.events) || [];
-          let lastTurn = -1, ends = 0, lastReason = ''; const ended = {};
+          let lastTurn = -1, ends = 0, lastReason = '', lastErrorMsg = ''; const ended = {};
           // A22（2026-09-22 用户问"为什么昨天还是没有自动获取"）：**顺手读出"主 agent 正在等你回答的提问"**。
           //   实测 2026-09-21 那轮：23:35:59 它调了 `ask_user_question`（问 15 条勾选要不要删），随后**一直等**；
           //   而自动轮**不把会话弹到前台**，用户根本不知道有提问 ⇒ 90 秒后 `turn/end reason={"kind":"interrupted"}`，
@@ -1377,6 +1395,11 @@ const roundPromptLive = async (date, reason, since, mode) => {
               // **最后一个回合是怎么结束的**：'completed' 正常 ｜ 'error' 异常（实测 "Stream ended without
               //   finish_reason" ⇒ {kind:'error',error:{code:'TRANSPORT'}}）｜ 'aborted' 被停 ｜ 'interrupted' 被打断
               lastReason = (e.data.reason && e.data.reason.kind) ? String(e.data.reason.kind) : '';
+              // A102：**把错误原文也带出来**（只在 `reason.error.message` 里）。madmodel 的流式缺陷
+              //   （`Unterminated string in JSON` / `Unexpected end of JSON input`）就靠这一行认签名；
+              //   完成的回合会把 `reason.error` 置空 ⇒ 这里自然清掉，不会把旧错误当成这一轮的。
+              lastErrorMsg = (e.data.reason && e.data.reason.error && e.data.reason.error.message)
+                ? String(e.data.reason.error.message) : '';
             }
             if (e.type === 'tool/call' && String(e.data.name || '') === 'ask_user_question') {
               ask = { callId: String(e.data.callId || ''), at: Number(e.time) || Number(e.data.time) || Date.now(),
@@ -1402,7 +1425,8 @@ const roundPromptLive = async (date, reason, since, mode) => {
             } catch (e) {}
             askOut = { callId: ask.callId, at: ask.at, raw: ask.raw, questions: qs };
           }
-          return { ends: ends, open: lastTurn >= 0 && !ended[lastTurn], lastReason: lastReason, ask: askOut };
+          return { ends: ends, open: lastTurn >= 0 && !ended[lastTurn], lastReason: lastReason,
+                   lastErrorMsg: lastErrorMsg, ask: askOut };
         } catch (e) { return null }
       };
 
@@ -1459,6 +1483,24 @@ const roundPromptLive = async (date, reason, since, mode) => {
           return { ok: !!sel, selected: sel ? { provider: String(sel.provider), model: String(sel.model),
                                                  reasoningEffort: sel.reasoningEffort ? String(sel.reasoningEffort) : '' } : null };
         } catch (e) { return { ok: false, error: String((e && e.message) || e) } }
+      };
+      //: A103（2026-10-01，另一会话核到）：配置里 `routes[].model = 'DeepSeek-V4-Flash-0731'` 已于 09-29 下线，
+      //:   但**没有造成故障** —— 因为这条 adopt 路径原来把 `setRouteModel` 的返回值丢掉了：`selectModel` 没选中时
+      //:   会话会**静默保留原模型**（本机正好是 `agent-default-model`＝deepseek/DeepSeek-V4.1-Flash，能用）。
+      //:   于是"配置写着一个不存在的模型"这件事**看不见**。这里把结果记进 state，由 `/state` 回显 ——
+      //:   只加"可见提示"，**不动配置**（用户口径：先查机制，别急着改线上配置）。
+      const noteRouteModel = async (sc, id, route) => {
+        let sm = null;
+        try { sm = await setRouteModel(sc, id, route) } catch (e) { sm = { ok: false, error: String((e && e.message) || e) } }
+        const want = ROUTE_MODELS[route] || {};
+        const wantS = String(want.provider || '') + '/' + String(want.model || '');
+        S.routeModelAt = Date.now();
+        S.routeModelNote = (sm && sm.ok && sm.selected)
+          ? ('ok ' + sm.selected.provider + '/' + sm.selected.model + '（配置要求 ' + wantS + '）')
+          : ('**未采用配置里的 model**（' + wantS + '）⇒ 会话保留原模型：'
+             + String((sm && sm.error) || 'selectModel 未返回 selected'));
+        try { saveSoon() } catch (e) {}
+        return sm;
       };
       const createRouteSession = async (route, steps) => {
         const sc = ctx.get('sessionController'), wc = ctx.get('workspaceController');
@@ -1520,14 +1562,14 @@ const roundPromptLive = async (date, reason, since, mode) => {
         const stored = String(S[key] || '');
         // A29：**只有「确定死了」（false）才清槽**；未知（null）按「还在」处理 ⇒ 保留原槽、不认领、不新建。
         const alive = stored ? await liveOk(sc, stored, wc) : false;
-        if (stored && alive !== false) { try { await setRouteModel(sc, stored, route) } catch (e) {} return stored }
+        if (stored && alive !== false) { await noteRouteModel(sc, stored, route); return stored }
         if (stored) { steps.push('slot-stale:' + route); S[key] = '' }
         // ② 槽空时**先按标题认回既有会话**（重启后槽没持久化也别新建）
         try {
           const ids = await wsSessionIds(wc);
           const other = String((String(route) === String(R0) ? S.sessParatera : S.sessThu) || '');
           const found = await adoptRouteByTitle(ids, routeTitles(route), [other], steps);
-          if (found) { S[key] = found; await setRouteModel(sc, found, route); return found }
+          if (found) { S[key] = found; await noteRouteModel(sc, found, route); return found }
         } catch (e) { steps.push('adopt-title:err') }
         // A29：**只有「槽本来就是空的」才允许拿当前会话顶替**。曾经有过 stored（哪怕是死的）就绝不用当前
         //   会话顶替 —— 那正是「多出一个主 agent」的直接来源。
@@ -1901,21 +1943,61 @@ const roundPromptLive = async (date, reason, since, mode) => {
           //   自动说「继续」等于跟他对着干。
           //   **只对"我们自己触发的那一轮"续跑**（`S.busyFor` 非空）：否则会把一条被停掉的旁支会话又"续"活。
           const abn = (st.lastReason === 'error') ? st.lastReason : '';
+          // A102（2026-10-01，另一会话在 madmodel 侧定案）：**这个签名是可重试的** ——
+          //   服务端流式返回**较长的工具调用参数**时，会把一个事件的 JSON 劈成两帧（后一帧还换个新 id、
+          //   裸正文没有 JSON 外壳），客户端于是报 `Unterminated string in JSON` /
+          //   `Unexpected end of JSON input`。现场（本会话 2026-10-01，本地时间）：17:13:30–17:32:54
+          //   **6 连败全是这个签名**，17:35 自己就过了 ⇒ 间歇性、与线路无关、与我们的数据无关。
+          //   所以三条：① 认签名并**落盘**（`streamErrors` 攒最近 8 条，供事后对账）
+          //            ② 退避重试（这个签名 5 次、每次等 60 秒；普通错误照旧 3 次、不等 —— 老行为不变）
+          //            ③ 试满仍是这个签名 ⇒ **换到另一条线路重跑**（同一台服务端的问题；不靠"缩输出"规避）
+          const errMsg = String(st.lastErrorMsg || '');
+          const flaky = /Unterminated string in JSON|Unexpected end of JSON input/i.test(errMsg);
+          if (flaky) {
+            S.streamFlakyCount = (Number(S.streamFlakyCount) || 0) + 1;
+            S.lastStreamError = errMsg.slice(0, 400);
+            S.lastStreamErrorAt = Date.now();
+            S.streamErrors = (Array.isArray(S.streamErrors) ? S.streamErrors : []).concat([{
+              at: Date.now(), ends: Number(st.ends) || 0, route: String(routeOfActive() || ''), msg: errMsg.slice(0, 200),
+            }]).slice(-8);
+          }
           if (abn && S.autoRetry !== false && roundSid) {
+            const cap = flaky ? 5 : 3;
             const tries = Number(S.retryCount || 0) + 1;
-            if (tries <= 3) {
+            // 退避窗口：只对"异常签名"等；普通错误立刻续跑（保持原行为）
+            if (flaky && S.retryAt && Date.now() < S.retryAt) {
+              S.busy = true; S.busyFor = roundSid; S.busySawOpen = false;   // 收尾权仍在我们手里
+              S.note = '流式截断签名退避中（还等 ' + Math.max(1, Math.round((S.retryAt - Date.now()) / 1000))
+                     + ' 秒再续跑）—— ' + errMsg.slice(0, 60);
+              await saveState();
+              return;
+            }
+            if (tries <= cap) {
               S.retryCount = tries; S.lastRetryAt = Date.now();
+              S.retryAt = flaky ? (Date.now() + 60 * 1000) : 0;
               try {
                 const base2 = await turnEnds(sc, sid);
                 await sc.prompt({ requestId: 'retry-' + Date.now(), sessionId: sid, mode: 'queue',
-                                  content: [{ type: 'text', text: '继续' }] }, FAKE_SIGNAL);
+                                  content: [{ type: 'text', text: flaky ? '继续（上一回合是流式截断，直接重试即可）' : '继续' }] }, FAKE_SIGNAL);
                 S.busy = true; S.busySince = Date.now(); S.busyBase = base2;
                 S.busyFor = sid; S.busySawOpen = false;
-                S.note = '上一轮异常结束（' + abn + '）⇒ 已自动续跑（第 ' + tries + ' 次，' + cstHM() + '）';
+                S.note = '上一轮异常结束（' + abn + (flaky ? '／流式截断签名' : '') + '）⇒ 已自动续跑（第 '
+                       + tries + '/' + cap + ' 次，' + cstHM() + '）';
                 await saveState();
                 return;
               } catch (e) { noteError('auto-retry', e) }
             } else {
+              // 试满了：这个签名**换线路**再来一轮（不是缩输出 —— 触发条件是单次事件体大，缩了只会掩盖）
+              const cur = String(routeOfActive() || '');
+              if (flaky && R1 && String(R1) !== cur) {
+                S.retryCount = 0; S.retryAt = 0;
+                S.note = '流式截断连败 ' + cap + ' 次（' + cur + '）⇒ 换线路到 ' + String(R1) + ' 重跑一轮（' + cstHM() + '）';
+                await saveState();
+                try {
+                  Promise.resolve(triggerRound('auto', { probeRoute: R1 })).catch((e) => noteError('degrade-trigger', e));
+                } catch (e) { noteError('degrade-trigger', e) }
+                return;
+              }
               S.note = '上一轮异常结束（' + abn + '）且已自动续跑 ' + S.retryCount + ' 次，先停下（' + cstHM() + '）';
               await saveState();
               return;
@@ -2063,6 +2145,11 @@ const roundPromptLive = async (date, reason, since, mode) => {
         //   autoWhy＝最近一次 tick 的结论；autoRetry/retryCount/busyFor/pendingCollect 原先只在 state.json 里，
         //   冷启动卡把它们列为"观测缺口"，一并补上。
         autoWhy: S.autoWhy || '', autoRetry: S.autoRetry !== false, retryCount: Number(S.retryCount || 0),
+        // A102：流式截断签名 + setRouteModel 的结果（都是"事后能查"的现场）
+        retryAt: Number(S.retryAt || 0), streamFlakyCount: Number(S.streamFlakyCount || 0),
+        lastStreamError: String(S.lastStreamError || ''), lastStreamErrorAt: Number(S.lastStreamErrorAt || 0),
+        streamErrors: Array.isArray(S.streamErrors) ? S.streamErrors.slice(-8) : [],
+        routeModelNote: String(S.routeModelNote || ''),
         // A98：自动失败的现场（退避到什么时候、试了几次、上一次派发失败的原话）
         autoFireRetryAt: Number(S.autoFireRetryAt || 0), autoFireRetryTries: Number(S.autoFireRetryTries || 0),
         autoFireDueKey: String(S.autoFireDueKey || ''), autoLastOkAt: Number(S.autoLastOkAt || 0),
