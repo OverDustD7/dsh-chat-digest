@@ -169,7 +169,7 @@ def main(argv):
     print("  kind: A=%s  B=%s" % (ka, kb))
     for s, sc, m in sorted(miss, key=lambda r: -len(str(r[0].get("text") or "")))[:5]:
         print("  漏报候选？ %s  [%s/%s]" % (head(s, 60), s.get("kind"), s.get("urgency")))
-    print("报告已写：%s" % os.path.relpath(p, HERE))
+    print("报告已写：%s" % os.path.relpath(p, PROFILE))
     return 0
 
 

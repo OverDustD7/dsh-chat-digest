@@ -226,7 +226,7 @@ def save_index(path, obj):
         print("（已备份：%s）" % os.path.basename(bak))
     with open(path, "w", encoding="utf-8", newline="\n") as f:
         json.dump(obj, f, ensure_ascii=False, indent=1)
-    print("（已回写索引：%s）" % os.path.relpath(path, HERE))
+    print("（已回写索引：%s）" % os.path.relpath(path, PROFILE))
 
 
 def clip(s, n):
@@ -307,7 +307,7 @@ def main():
     files = obj.get("files") or []
 
     if a.list:
-        print("== %s ｜ %s ｜ 共 %d 条 ==" % (a.date, os.path.relpath(ipath, HERE), len(files)))
+        print("== %s ｜ %s ｜ 共 %d 条 ==" % (a.date, os.path.relpath(ipath, PROFILE), len(files)))
         for i, f in enumerate(files):
             print(fmt_line(i, f))
         return 0

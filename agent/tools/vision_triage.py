@@ -47,6 +47,10 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import split_day as sd  # noqa: E402
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# 落盘里的图片路径一律相对 `PROFILE`，**不要相对 `HERE`**：包在 D:、数据在
+# `%USERPROFILE%\.dsh\dsh-chat-digest`（C:）时，`os.path.relpath(图, HERE)` 会抛
+# `ValueError: path is on mount 'C:', start on mount 'D:'` ⇒ 推理跑完、写产物时整步炸
+# （2026-10-02 `3j` 89 秒跑完却 MISSING `_vision.md` 的真因）。历史形态就是 `output\window\images\…`。
 URL = "http://127.0.0.1:11434/api/chat"
 MODEL = "qwen3.5:9b"
 SYS = (
@@ -287,7 +291,7 @@ def main():
     for it in review + fail:
         o = it["obj"] or {}
         tag = "FAIL" if not it["obj"] else ("action" if o.get("action") else ("fields" if o.get("fields") else "info"))
-        L.append("- `%s` ｜ %s ｜ %.1fs ｜ **%s**" % (os.path.relpath(it["file"], HERE), it["chat"], it["dt"], tag))
+        L.append("- `%s` ｜ %s ｜ %.1fs ｜ **%s**" % (os.path.relpath(it["file"], PROFILE), it["chat"], it["dt"], tag))
         L.append("  - 本地判断：%s%s" % (json.dumps(o, ensure_ascii=False) if o else ("解析失败：" + it["raw"]),
                                       "  ← **必须回看原图**" if (not o or o.get("action") or (not o.get("action") and (o.get("fields") or [])) or (not o.get("noise") and not o.get("action"))) else ""))
         d = it.get("detail")
@@ -308,7 +312,7 @@ def main():
     L += ["", "## 二、判为无信息（%d 张，不必进强模型）" % len(noise), ""]
     for it in noise:
         o = it["obj"] or {}
-        L.append("- `%s` ｜ %s ｜ %s" % (os.path.relpath(it["file"], HERE), o.get("what", ""), o.get("why", "")))
+        L.append("- `%s` ｜ %s ｜ %s" % (os.path.relpath(it["file"], PROFILE), o.get("what", ""), o.get("why", "")))
     L += ["", "## 三、自证", "",
           "| 项 | 值 |", "|---|---|",
           "| 落盘图（索引里存在磁盘上的） | %d |" % len(items),
@@ -329,12 +333,12 @@ def main():
                       "detail_ok": n_detail, "detail_tried": len(d_targets),
                       "ctx_ok": n_ctx, "ctx_missing": len(items) - n_ctx,
                       "triage_sec": round(tot, 1), "detail_sec": round(t_d, 1)},
-            "review": [{"file": os.path.relpath(it["file"], HERE).replace("\\", "/"), "chat": it["chat"],
+            "review": [{"file": os.path.relpath(it["file"], PROFILE).replace("\\", "/"), "chat": it["chat"],
                         "ts": it["ts"], "sender": it["sender"], "triage": it["obj"], "detail": it.get("detail"),
                         # 归属判据：阶段 5 **必须**先看这里，再看图里写了什么（2026-09-18）
                         "ctx": it.get("ctx")}
                        for it in review + fail],
-            "noise": [{"file": os.path.relpath(it["file"], HERE).replace("\\", "/"), "chat": it["chat"],
+            "noise": [{"file": os.path.relpath(it["file"], PROFILE).replace("\\", "/"), "chat": it["chat"],
                        "what": (it["obj"] or {}).get("what", "")} for it in noise]}
     io.open(jpath, "w", encoding="utf-8", newline="\n").write(json.dumps(pack, ensure_ascii=False, indent=1))
     print("REVIEW %d | noise %d | fail %d | detail %d/%d | total %.0fs | -> %s"

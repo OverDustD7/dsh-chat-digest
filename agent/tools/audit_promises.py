@@ -94,7 +94,7 @@ def main():
     for num, st, title, i in open_rows:
         print("   #%-3s [%-8s] %s" % (num, st, title[:70]))
     print("\ntier1 未完成措辞：%d 处（明细见文件）" % len(hits))
-    print("清单 -> %s" % os.path.relpath(a.out, HERE))
+    print("清单 -> %s" % os.path.relpath(a.out, PROFILE))
     return 0
 
 
