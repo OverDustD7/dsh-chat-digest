@@ -301,7 +301,7 @@ def main():
           % (len(rows), len(acc), len(known), len(cand), sum(1 for b in acc if b not in known)))
     for nm, c, chats, t in sorted(cand, key=lambda x: -x[1])[:12]:
         print("   + %-22s %d 篇  %s" % (nm, c, chats))
-    print("明细 -> %s" % os.path.relpath(a.out, HERE))
+    print("明细 -> %s" % os.path.relpath(a.out, PROFILE))
     return 0
 
 

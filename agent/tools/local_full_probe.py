@@ -77,7 +77,7 @@ def main():
             print("没有已落盘的候选文件：%s" % cand_file)
             return 2
         cands = json.load(io.open(cand_file, encoding="utf-8"))
-        print("（--compare-only）直接读回 %d 条候选：%s" % (len(cands), os.path.relpath(cand_file, HERE)))
+        print("（--compare-only）直接读回 %d 条候选：%s" % (len(cands), os.path.relpath(cand_file, PROFILE)))
         return compare(a.date, cands)
     days = os.path.join(PROFILE, "output", "days")
     files = sorted(p for p in glob.glob(os.path.join(days, "%s_slice*" % a.date))
@@ -124,11 +124,11 @@ def main():
     io.open(out, "w", encoding="utf-8", newline="\n").write(json.dumps(cands, ensure_ascii=False, indent=1))
     print("\n本地产出 %d 条候选 ｜ 总耗时 %.0f 秒（平均 %.1fs/块）｜ 输出 %d token ｜ **API 花费 0**"
           % (len(cands), t_all, t_all / max(1, len(chunks)), tok_out))
-    print("落盘：%s" % os.path.relpath(out, HERE))
+    print("落盘：%s" % os.path.relpath(out, PROFILE))
 
     base = os.path.join(PROFILE, "output", "daily", a.date, "items.json")
     if not os.path.exists(base):
-        print("\n（无 DSH 基线 %s，跳过对账）" % os.path.relpath(base, HERE))
+        print("\n（无 DSH 基线 %s，跳过对账）" % os.path.relpath(base, PROFILE))
         return 0
     return compare(a.date, cands)
 

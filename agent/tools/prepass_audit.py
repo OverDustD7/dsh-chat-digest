@@ -65,7 +65,7 @@ def main():
     sfx = ("_" + a.tag) if a.tag else ""
     cpath = os.path.join(DAYS, "%s_candidates%s.json" % (a.date, sfx))
     if not os.path.exists(cpath):
-        print("MISSING %s（先跑 tools\\local_prepass.py %s%s）" % (os.path.relpath(cpath, HERE), a.date,
+        print("MISSING %s（先跑 tools\\local_prepass.py %s%s）" % (os.path.relpath(cpath, PROFILE), a.date,
                                                                   (" --tag " + a.tag) if a.tag else ""))
         return 2
     cands = json.load(io.open(cpath, encoding="utf-8"))
@@ -194,7 +194,7 @@ def main():
     L.append("**结论：%s**（FAIL 项 %d）" % ("有需要处理的问题" if bad else "六项通过", bad))
     out = os.path.join(DAYS, "%s_prepass_audit%s.md" % (a.date, sfx))
     io.open(out, "w", encoding="utf-8", newline="\n").write("\n".join(L) + "\n")
-    print("\n自检视图：%s" % os.path.relpath(out, HERE))
+    print("\n自检视图：%s" % os.path.relpath(out, PROFILE))
     print("FAIL 项：%d" % bad)
     return 1 if bad else 0
 

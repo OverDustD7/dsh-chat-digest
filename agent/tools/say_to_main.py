@@ -36,7 +36,7 @@ text = io.open(path, encoding="utf-8").read().strip()
 if not text:
     print("文本为空，不发")
     sys.exit(2)
-print("将发送 %d 字 → 主 agent（来源 %s）" % (len(text), os.path.relpath(path, HERE)))
+print("将发送 %d 字 → 主 agent（来源 %s）" % (len(text), os.path.relpath(path, PROFILE)))
 if dry:
     print("-" * 100)
     print(text)

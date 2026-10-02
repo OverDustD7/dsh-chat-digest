@@ -99,6 +99,22 @@ with contextlib.redirect_stdout(buf):
            {'stale':True,'qq':'stale(9.6天未更新)','wx_untouched':'ok','fresh':False,'missing':'stale(缺源库)'},
            {'stale':hit,'qq':s_stale[1]['status'],'wx_untouched':s_stale[0]['status'],
             'fresh':miss,'missing':s_gone[1]['status']})
+# A81（2026-10-02）：**数据/产物路径一律相对 `PROFILE`，不许相对 `HERE`**。
+#   `HERE` 是包内 `agent/`（本机在 D:），数据在 `%USERPROFILE%\.dsh\dsh-chat-digest`（C:）⇒
+#   `os.path.relpath(数据, HERE)` 抛 `ValueError: path is on mount 'C:', start on mount 'D:'`，
+#   整步 FAILED：实测 `3j 图片分诊`（89 秒推理跑完、写产物那一刻炸）与 `3k-b 公众号作者扫描`
+#   每轮都挂在这上面〔2026-10-01/02〕。历史输出的相对形态（`output/...`）本来就是相对 PROFILE 的。
+#   注释行豁免（说明文字里会引用这个写法）。
+_bad_relpath = []
+for _p in sorted(TOOLS.glob('*.py')):
+    for _i, _ln in enumerate(_p.read_text(encoding='utf-8', errors='replace').splitlines(), 1):
+        _s = _ln.strip()
+        if _s.startswith('#'):
+            continue
+        if 'relpath(' in _s and ', HERE)' in _s:
+            _bad_relpath.append('%s:%d' % (_p.name, _i))
+record('P08_no_data_relpath_against_package_root', [], _bad_relpath)
+
 failures = [r for r in results if not r['pass_']]
 print(json.dumps({'total': len(results), 'passed': len(results)-len(failures), 'failures': failures}, ensure_ascii=False))
 temp_root = pathlib.Path(tempfile.gettempdir()).resolve()

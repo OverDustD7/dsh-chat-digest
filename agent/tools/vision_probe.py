@@ -136,7 +136,7 @@ def main():
          "> 模型：%s（本机 Ollama）｜解析成功 %d/%d｜判为 noise %d｜判为 action %d｜总耗时 %.1fs（均 %.1fs/张）"
          % (MODEL, ok, len(pick), noise, act, tot, tot / max(1, len(pick))), ""]
     for p, sz, dt, tag, body in rows:
-        L.append("- `%s`（%dKB，%.1fs，**%s**）" % (os.path.relpath(p, HERE), sz, dt, tag))
+        L.append("- `%s`（%dKB，%.1fs，**%s**）" % (os.path.relpath(p, PROFILE), sz, dt, tag))
         L.append("  %s" % body)
     io.open(out, "w", encoding="utf-8", newline="\n").write("\n".join(L) + "\n")
     print("OK parsed=%d/%d noise=%d action=%d total=%.1fs avg=%.1fs -> %s"

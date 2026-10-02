@@ -74,7 +74,7 @@ def main():
         sel = body[:40] if not a.all else body
     kw = re.compile(a.kw if a.kw is not None else (DEFAULT_KW if not a.all else r"."))
     n, hits = 0, 0
-    print("== %s ｜ 共 %d 消息行 ｜ 取 %d 行 ==" % (os.path.relpath(p, HERE), len(body), len(sel)))
+    print("== %s ｜ 共 %d 消息行 ｜ 取 %d 行 ==" % (os.path.relpath(p, PROFILE), len(body), len(sel)))
     for i in sel:
         if i < 1 or i > len(lines):
             continue

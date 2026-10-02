@@ -31,6 +31,10 @@ import urllib.request
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# 显示/落盘用的**数据**路径一律相对 `PROFILE`，**不要相对 `HERE`**：包在 D:、数据在
+# `%USERPROFILE%\.dsh\dsh-chat-digest`（C:）时，`os.path.relpath(数据, HERE)` 会直接抛
+# `ValueError: path is on mount 'C:', start on mount 'D:'` ⇒ 整步 FAILED（2026-10-01/02 A81，
+# `3j 图片分诊` 与本地初提连挂数轮的真因）。历史输出的相对形态（`output/...`）也正是相对 PROFILE。
 DAYS = os.path.join(PROFILE, "output", "days")
 LOGS = os.path.join(PROFILE, "output", "logs")
 URL = "http://127.0.0.1:11434/api/chat"
@@ -85,7 +89,7 @@ def load_rows(a):
             s = ln.rstrip("\n")
             m = ROW.match(s)
             if m:
-                rows.append({"file": os.path.relpath(f, HERE).replace("\\", "/"),
+                rows.append({"file": os.path.relpath(f, PROFILE).replace("\\", "/"),
                              "line": i, "t": m.group(1), "g": group_of(m.group(2)), "raw": s[2:]})
             elif s.startswith("- "):
                 skipped += 1
@@ -193,7 +197,7 @@ def main():
           % (a.date, ("/" + a.tag) if a.tag else "", len(rows), skipped, len(files),
              len(chunks), a.chunk, a.model))
     for f in files:
-        print("   · %s" % os.path.relpath(f, HERE))
+        print("   · %s" % os.path.relpath(f, PROFILE))
 
     cdir = os.path.join(LOGS, "_prepass_%s%s" % (a.date, sfx))
     if not os.path.isdir(cdir):
@@ -274,7 +278,7 @@ def main():
     write_review(rpath, a.date + ("/" + a.tag if a.tag else ""), cands, meta)
     print("\n" + meta)
     print("候选 JSON：%s\n人读视图：%s\n分块缓存：%s"
-          % (os.path.relpath(cpath, HERE), os.path.relpath(rpath, HERE), os.path.relpath(cdir, HERE)))
+          % (os.path.relpath(cpath, PROFILE), os.path.relpath(rpath, PROFILE), os.path.relpath(cdir, PROFILE)))
     return 1 if (failed or done < len(chunks) or runaways) else 0     # 有块没跑成 / 有块跑飞 → 非零，**不许静默当成功**
 
 

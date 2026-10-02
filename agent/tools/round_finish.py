@@ -136,11 +136,11 @@ def main(argv=None):
                 n = len(json.loads(io.open(p, encoding="utf-8").read()))
             except Exception:                                  # noqa: BLE001
                 n = -1
-            rows.append(("交付", "OK" if n > 0 else "FAIL", "%s（%s 条）" % (os.path.relpath(p, HERE), n)))
+            rows.append(("交付", "OK" if n > 0 else "FAIL", "%s（%s 条）" % (os.path.relpath(p, PROFILE), n)))
             if n <= 0:
                 fails.append("交付 items.json")
         else:
-            rows.append(("交付", "FAIL", "缺 %s" % os.path.relpath(p, HERE)))
+            rows.append(("交付", "FAIL", "缺 %s" % os.path.relpath(p, PROFILE)))
             fails.append("交付 items.json")
 
     print("== 收尾自检（%s 起）==" % a.since)

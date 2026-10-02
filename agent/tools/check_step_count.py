@@ -95,7 +95,7 @@ def main():
     n_rows, newest = count_report_rows()
     print("权威口径 A（daily_prep.py 的 run( 调用数） = %d" % n_run)
     print("权威口径 B（最新 prep_report.md 表行数） = %s  ← %s"
-          % (n_rows, os.path.relpath(newest, ROOT) if newest else "(没有报告)"))
+          % (n_rows, os.path.relpath(newest, PROFILE) if newest else "(没有报告)"))
 
     if n_rows is not None and n_run != n_rows:
         print("  **两个口径不一致** —— 先查是不是有步骤没走 run(...) / 报告被改过")
