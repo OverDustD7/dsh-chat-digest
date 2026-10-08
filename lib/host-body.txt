@@ -1950,7 +1950,9 @@ const roundPromptLive = async (date, reason, since, mode) => {
           //   **6 连败全是这个签名**，17:35 自己就过了 ⇒ 间歇性、与线路无关、与我们的数据无关。
           //   所以三条：① 认签名并**落盘**（`streamErrors` 攒最近 8 条，供事后对账）
           //            ② 退避重试（这个签名 5 次、每次等 60 秒；普通错误照旧 3 次、不等 —— 老行为不变）
-          //            ③ 试满仍是这个签名 ⇒ **换到另一条线路重跑**（同一台服务端的问题；不靠"缩输出"规避）
+          //            ③ 试满仍是这个签名 ⇒ **停在原会话、不换线路**（用户 2026-10-01 定案：「不需要换到另一条
+          //               线路重跑，他自己服务侧就是会有问题，像现在回复继续就好了」——换线路必然去花
+          //               paratera 的钱）；也不靠"缩输出"规避（触发条件与输出长度无关）
           const errMsg = String(st.lastErrorMsg || '');
           const flaky = /Unterminated string in JSON|Unexpected end of JSON input/i.test(errMsg);
           if (flaky) {
@@ -2011,8 +2013,10 @@ const roundPromptLive = async (date, reason, since, mode) => {
         }
       };
 
-      // 自动：每 30 秒看一眼 CST 时间。到点、且"今天还没采集过"就触发；
-      // 重启后过了 autoTime 才打开页面也会补触发（**一天只跑一次**，去重只认 autoFiredDay）
+      // 自动：每 30 秒看一眼 CST 时间，判据只有一条（A99，实现见下面的 `dueKey`）：
+      //   最近一个应跑时刻（dueKey）> 上次**成功触发**的时刻（autoLastOkAt）⇒ 立刻跑。
+      //   ⇒ 到点就跑；当时宿主不在、页面没开也会在之后的 tick 上补上（不再有"一天只跑一次"的限制，
+      //     `autoFiredDay` 仅作展示）。
       try {
         const offTick = timerSvc.interval(() => {
           try {
@@ -2052,7 +2056,7 @@ const roundPromptLive = async (date, reason, since, mode) => {
             //   而 `collectDay` 的语义是**"上次采到哪天"（游标）**，不是"今天自动跑过没" ——
             //   于是当晚 23:30 的 tick 命中 `S.collectDay === day` 直接跳过：
             //   `autoFiredDay` 始终为空、服务器 21:20 起一直活着、23:30 那一轮从没发生。
-            //   "今天自动跑过没"**只有一个判据：`autoFiredDay`**。
+            //   "今天自动跑过没"**只有一个判据：`autoFiredDay`**（**A99 起已被下面的 dueKey 取代**，此句保留为当时的推理）。
             // A99（2026-10-01 用户定案的口径）：**Auto ＝「过了 auto 时间还没跑过 auto，就立刻跑」**。
             //   旧判据是「今天跑过没（`autoFiredDay === day`）」＋「没到点不跑」⇒ 宿主那晚不在就**漏掉整晚**
             //   而且次日起来也不算欠账（09-30 那晚就是：23:30 时进程不在 ⇒ 没有 tick ⇒ 什么都没发生）。
