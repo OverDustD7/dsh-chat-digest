@@ -66,7 +66,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--rows", type=int, default=60)
     ap.add_argument("--slice", default=os.path.join("output", "days", "2026-09-14_slice01_units.md"))
-    ap.add_argument("--model", default="qwen3.5:9b")
+    ap.add_argument("--model", default="mimo-v2.6:9b-q6_K")
     a = ap.parse_args()
     p = a.slice if os.path.isabs(a.slice) else os.path.join(PROFILE, a.slice)
     if not os.path.exists(p):

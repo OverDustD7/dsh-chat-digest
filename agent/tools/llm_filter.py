@@ -30,9 +30,22 @@ import urllib.request
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# 2026-10-18 端口对调：门卫（E:\Models\sidecar-mover.mjs）坐在 Ollama 原来的 11434 上，
+# Ollama 本体挪到 11437 —— 所以这里的地址**不用改**，照旧写 11434 就是走门卫。
+# 门卫在两种情况下直接回 503（调用方据此走降级路径）：
+#   ① GPU 上有大模型（27B / 35B-A3B）在跑、或 5 分钟内刚跑过；② 检测到正在打游戏。
 URL = "http://127.0.0.1:11434/api/chat"
-MODEL = "qwen3.5:9b"
+# 2026-10-14 起换成 MiMo（原 qwen3.5:9b）。当天 269 条真实单元的 A/B：
+#   白名单该留的留住 8/10（旧 5/10）、热态 1.1~6.0s（旧 13.8~15.2s）；
+#   代价是总保留率 28% → 40%，多放一点噪声过去 —— 但漏掉的那些本就有 RESCUE 白名单兜底，
+#   「多留」比「漏掉」便宜，故取 MiMo。（qwen3.5:9b 已从本机删除。）
+MODEL = "mimo-v2.6:9b-q6_K"
 BATCH = 20
+# 2026-10-14：**必须显式给 num_ctx**。不给时 Ollama 按模型自带的值算 —— 模型自带的标称值
+# （qwen3.5:9b 262144、MiMo 131072）会让每次请求预测 23.3~38.3 GiB，远超
+# 16 GB 卡，Ollama 只能"驱逐一切再重装"（server.log 的 evicting 行），整机随之卡顿。
+# 取值依据（实测 prompt_eval_count）：一批 20 条消息 557~1364 token，32768 余量充足。
+NUM_CTX = 32768
 
 SYS = (
     "你在给一位某高校大一新生筛群聊记录。他只关心**对他有用的信息**，不关心闲聊。\n"
@@ -92,7 +105,7 @@ def ask(batch_lines, timeout=180, nudge=False):
         # 空数组保护用的"反问"（2026-09-15）：模型回 [] 会整批清空，反问一次更稳妥
         user += "\n注意：这一批里只要出现事实、安排、时间、数字、通知、作业、链接就必须保留；只有整批确实全是玩梗/寒暄才回 []。"
     payload = {"model": MODEL, "stream": False, "think": False,
-               "options": {"temperature": 0, "num_predict": 400},
+               "options": {"temperature": 0, "num_predict": 400, "num_ctx": NUM_CTX},
                "messages": [{"role": "system", "content": SYS}, {"role": "user", "content": user}]}
     req = urllib.request.Request(URL, data=json.dumps(payload).encode("utf-8"),
                                  headers={"Content-Type": "application/json"})

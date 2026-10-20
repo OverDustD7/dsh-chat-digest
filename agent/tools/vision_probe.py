@@ -25,8 +25,17 @@ import urllib.request
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT = os.path.join(PROFILE, "output")
+# 2026-10-18 端口对调：门卫（E:\Models\sidecar-mover.mjs）坐在 Ollama 原来的 11434 上，
+# Ollama 本体挪到 11437 —— 所以这里的地址**不用改**，照旧写 11434 就是走门卫。
+# 门卫在两种情况下直接回 503（调用方据此走降级路径）：
+#   ① GPU 上有大模型（27B / 35B-A3B）在跑、或 5 分钟内刚跑过；② 检测到正在打游戏。
 URL = "http://127.0.0.1:11434/api/chat"
-MODEL = "qwen3.5:9b"
+# 2026-10-14 起换成 MiMo（原 qwen3.5:9b），与 vision_triage.py 保持一致。
+MODEL = "mimo-v2.6:9b-q6_K"
+# 2026-10-14：**必须显式给 num_ctx**（同 vision_triage.py）。不给时 Ollama 用模型自带的值 ——
+# qwen3.5:9b 标称 262144 / MiMo 131072 → 预测 23.3~38.3 GiB，远超 16 GB 卡，
+# 触发 Ollama 的"驱逐一切再重装"，整机跟着卡。
+NUM_CTX = 32768
 
 SYS = (
     "你在帮一位某高校大一新生看群聊里的图片。只看图说话，不要猜。\n"
@@ -82,7 +91,7 @@ def ask(path):
     raw = io.open(path, "rb").read()
     b64 = base64.b64encode(raw).decode()
     payload = {"model": MODEL, "stream": False, "think": False,
-               "options": {"temperature": 0, "num_predict": 300},
+               "options": {"temperature": 0, "num_predict": 300, "num_ctx": NUM_CTX},
                "messages": [{"role": "system", "content": SYS},
                             {"role": "user", "content": "看这张图。", "images": [b64]}]}
     req = urllib.request.Request(URL, data=json.dumps(payload).encode("utf-8"),

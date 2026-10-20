@@ -2,7 +2,7 @@
 r"""阶段 2 · 读 + 初提 —— **本地模型逐块读语料，产出带来源锚点的候选条目**（0 元）。
 
 为什么要有它（2026-09-17）：省 token 路线定为「不外包」后，"读原始记录"从云端子代理
-挪到本机 Ollama。实测 qwen3.5:9b 读 09-14 全天 2,467 行只用 111 秒、覆盖基线 93%、0 元。
+挪到本机 Ollama。实测本机 9B 读 09-14 全天 2,467 行只用 111 秒、覆盖基线 93%、0 元。
 代价是**它会编造细节**（实测把「某书院6字班通知群」发的 SRT 立项写成「经管学院 SRT 立项」）
 ⇒ 本脚本的**核心设计就是给每条候选钉锚点**：让模型只能引用"它在块里真实读到的行号"，
 锚点（群名 / HH:MM / 分片文件 / 行号 / 原文片段）由**脚本从被引用的行反查生成**，
@@ -27,6 +27,7 @@ PROFILE = profile_root()
 import re
 import sys
 import time
+import urllib.error
 import urllib.request
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -38,6 +39,24 @@ HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DAYS = os.path.join(PROFILE, "output", "days")
 LOGS = os.path.join(PROFILE, "output", "logs")
 URL = "http://127.0.0.1:11434/api/chat"
+TAGS_URL = "http://127.0.0.1:11434/api/tags"
+GATE_URL = "http://127.0.0.1:11434/__route"      # 门卫自检（见 E:\Models\sidecar-mover.mjs）
+
+# 2026-10-21：**模型名不再写死**。10-14 用户把本机模型换过一轮（mimo-v2.6:9b-q6_K /
+# qwen3.8:27b-ud-q3_K_XL / qwen3.6:35b-a3b-mtp-q4_K_M），而这里原来写死的 `qwen3.6:35b-a3b`
+# 这三个都不是 ⇒ 每轮 33/33 块 HTTP 404，10-15~10-20 **连挂 5 轮**，每轮都在 round_state 里
+# 问同一句"默认值要不要改"。改成**现查 /api/tags 现选**，名字再变也不会哑火。
+#
+# 为什么把 9B 排在前面（而不是更大的 27B/35B）：11434 上有门卫（`E:\Models\sidecar-mover.mjs`），
+# GPU 上一旦出现"别的模型"（或 5 分钟内出现过 / games.txt 里的游戏在跑），它就把 9B 侧车卸下、
+# 并对**会触发装载的请求回 503** —— 而同一轮的 `3i 本地过筛` / `3j 图片分诊` 也走 11434、也要 9B。
+# 初提只是"提示"，不值得为它把整条视觉线打断。要大模型时显式 `--model qwen3.6:35b-a3b-mtp-q4_K_M`
+# （会占住那道门 5 分钟，同轮的 3i/3j 会 503 —— 那时脚本会等门开，见 wait_gate）。
+PREFER = (
+    r"^mimo-v2\.6:9b",        # 侧车小模型：不触发让路，3i/3j 同轮可继续
+    r"^qwen3\.8:27b",
+    r"^qwen3\.6:35b-a3b",
+)
 
 ROW = re.compile(r"^- (\d\d:\d\d)\s+(.*)$")          # 只认 `- HH:MM …`，挡掉「各会话条数」这类列表
 KINDS = ("todo", "chance", "official", "peer", "resource", "life")
@@ -57,7 +76,7 @@ PROMPT = (
 
 
 def ask(model, content, timeout=900, num_predict=1500):
-    # num_predict 是**必须的上限**：2026-09-17 实测 qwen3.5:9b 在某些块上会跑飞 ——
+    # num_predict 是**必须的上限**：2026-09-17 实测 9B 在某些块上会跑飞 ——
     # 一块输出 25,566 token（正常约 500）、耗时 249 秒、**返回 0 条**，静默丢掉那一块的覆盖。
     # 上限把它截断成"可发现的失败"，再由 run_chunk 标 _runaway，由 prepass_audit 报出来。
     payload = {"model": model, "stream": False, "think": False,
@@ -69,6 +88,60 @@ def ask(model, content, timeout=900, num_predict=1500):
     with urllib.request.urlopen(req, timeout=timeout) as r:
         j = json.loads(r.read().decode("utf-8"))
     return j, time.time() - t0
+
+
+def list_models(timeout=20):
+    """本机现有哪些对话模型（`/api/tags`）。连不上就直接给出可行动的错。"""
+    try:
+        with urllib.request.urlopen(TAGS_URL, timeout=timeout) as r:
+            j = json.loads(r.read().decode("utf-8"))
+    except Exception as e:                             # noqa: BLE001
+        raise SystemExit("读不到 %s（Ollama 没起？）：%s" % (TAGS_URL, e))
+    return [str((m or {}).get("name") or "").strip()
+            for m in (j.get("models") or []) if str((m or {}).get("name") or "").strip()]
+
+
+def pick_model(want, avail):
+    """显式给了名字就必须对得上（对不上＝立刻失败，列出现有的）；没给就按 PREFER 择优。"""
+    if want:
+        if want in avail:
+            return want
+        family = [n for n in avail if n.split(":")[0] == want.split(":")[0]]
+        raise SystemExit("模型 `%s` 不在本机（/api/tags）。现有：%s%s"
+                         % (want, ", ".join(avail) or "(空)",
+                            ("\n  同族可用名：%s" % ", ".join(family)) if family else ""))
+    for pat in PREFER:
+        for n in avail:
+            if re.match(pat, n):
+                return n
+    for n in avail:                                    # 兜底：任何非嵌入模型（再改名也不会"没有模型"）
+        if "embed" not in n and "bge" not in n:
+            return n
+    raise SystemExit("/api/tags 里没有可用的对话模型：%s" % (", ".join(avail) or "(空)"))
+
+
+def gate_placement(timeout=5):
+    """门卫的挡位（`serving` / `parked`）。没有这道门（直连 Ollama）⇒ 返回空串，当作可用。"""
+    try:
+        with urllib.request.urlopen(GATE_URL, timeout=timeout) as r:
+            return str((json.loads(r.read().decode("utf-8")) or {}).get("placement") or "")
+    except Exception:                                  # noqa: BLE001
+        return ""
+
+
+def wait_gate(max_wait=360):
+    """503 ＝ 门卫在让路（大模型/游戏占着显存，它自己冷却 5 分钟）⇒ **等**，别把整轮判失败。"""
+    t0 = time.time()
+    while time.time() - t0 < max_wait:
+        cur = gate_placement()
+        if cur in ("", "serving"):
+            if time.time() - t0 > 1:
+                print("  门卫已恢复转发（等了 %.0f 秒）" % (time.time() - t0))
+            return True
+        print("  门卫在让路（%s），再等 10 秒……" % (cur or "?"))
+        time.sleep(10)
+    print("  门卫 %.0f 秒内没恢复 ⇒ 这一块按失败计" % max_wait)
+    return False
 
 
 def load_rows(a):
@@ -171,10 +244,11 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("date")
     ap.add_argument("--chunk", type=int, default=150)
-    # 默认模型（2026-09-17 用户定）：**A3B** —— 实测 09-16 全天 255 秒 / 73 条 / **0 跑飞**，
-    # 而 9B 是 337 秒 / 84 条 / **1 块跑飞（静默丢掉一整块）**。一天绝对时间只差 1–2 分钟、两者都 0 元。
-    # 9B 保留作快速预演：`--model qwen3.5:9b`。对照见 `docs\A3B-VS-9B.md`。
-    ap.add_argument("--model", default="qwen3.6:35b-a3b")
+    # 不给 --model ⇒ **按 /api/tags 现查现选**（见上面 PREFER 与那段 2026-10-21 的说明）。
+    # 历史的选型依据（2026-09-17 定 A3B：255 秒 / 73 条 / 0 跑飞；9B：337 秒 / 84 条 / 1 块跑飞）
+    # 只对当年那两个名字成立 —— 名字一换就全废，那正是 10-15~10-20 连挂 5 轮的原因。
+    ap.add_argument("--model", default=None,
+                    help="不写＝按 /api/tags 择优（9B 优先，避免门卫让路）；写错会立刻报出可用的名字")
     ap.add_argument("--max-chunks", type=int, default=0, help="0 = 不限（先拿 1 试跑）")
     ap.add_argument("--include", action="append", help="追加语料文件（可重复），如 09-15 的 tail 视图")
     ap.add_argument("--only-include", action="store_true",
@@ -184,6 +258,11 @@ def main():
     ap.add_argument("--redo", help="逗号分隔的块号：**忽略缓存重跑这几块**（跑飞的块用它补）")
     ap.add_argument("--only-chunks", help="逗号分隔的块号：只跑这几块（与 --redo 合用时＝只重跑这几块）")
     a = ap.parse_args()
+    avail = list_models()
+    picked = pick_model(a.model, avail)          # 名字不在本机 ⇒ 立刻退出并列出可用的（不再 404×33 块）
+    if not a.model:
+        print("模型未指定 ⇒ 按 /api/tags 选中最优可用：%s（现有：%s）" % (picked, ", ".join(avail)))
+    a.model = picked
     sfx = ("_" + a.tag) if a.tag else ""
 
     files, rows, skipped = load_rows(a)
@@ -232,6 +311,17 @@ def main():
             try:
                 got, sec, tk = run_chunk(a.model, ch, base_no)
                 break
+            except urllib.error.HTTPError as e:      # 503 ＝ 门卫让路（大模型/游戏）；404 ＝ 名字不对
+                print("  块 %02d/%02d  第 %d 次失败：HTTP %s %s"
+                      % (i, len(chunks), attempt, e.code, getattr(e, "reason", "")))
+                got = None
+                if e.code == 503 and attempt < 3:
+                    wait_gate()                      # 等它开门，别把整轮判失败
+                elif e.code == 404:
+                    raise SystemExit("模型 `%s` 在 11434 上回 404 ⇒ 名字已失效。现有：%s"
+                                     % (a.model, ", ".join(list_models())))
+                elif attempt < 3:
+                    time.sleep(5 * attempt)
             except Exception as e:                   # noqa: BLE001
                 print("  块 %02d/%02d  第 %d 次失败：%s" % (i, len(chunks), attempt, e))
                 got = None

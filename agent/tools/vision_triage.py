@@ -51,8 +51,21 @@ HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # `%USERPROFILE%\.dsh\dsh-chat-digest`（C:）时，`os.path.relpath(图, HERE)` 会抛
 # `ValueError: path is on mount 'C:', start on mount 'D:'` ⇒ 推理跑完、写产物时整步炸
 # （2026-10-02 `3j` 89 秒跑完却 MISSING `_vision.md` 的真因）。历史形态就是 `output\window\images\…`。
+# 2026-10-18 端口对调：门卫（E:\Models\sidecar-mover.mjs）坐在 Ollama 原来的 11434 上，
+# Ollama 本体挪到 11437 —— 所以这里的地址**不用改**，照旧写 11434 就是走门卫。
+# 门卫在两种情况下直接回 503（调用方据此走降级路径）：
+#   ① GPU 上有大模型（27B / 35B-A3B）在跑、或 5 分钟内刚跑过；② 检测到正在打游戏。
 URL = "http://127.0.0.1:11434/api/chat"
-MODEL = "qwen3.5:9b"
+# 2026-10-14 起换成 MiMo（原 qwen3.5:9b）：同一批真实群图的 A/B 里 MiMo 字段抽取明显更强
+# （购票页旧模型把 schema 占位串原样吐回，MiMo 给出「时间 09:30-21:00 / 地点 上海影城 / ¥45起」）。
+MODEL = "mimo-v2.6:9b-q6_K"
+# 2026-10-14：**必须显式给 num_ctx**。不给时 Ollama 按模型自带的值算 —— 模型自带的标称值
+# （qwen3.5:9b 262144 / MiMo 131072），于是每次请求都预测 23.3~38.3 GiB，
+# 远超 16 GB 卡；Ollama 只能"驱逐一切再重装"（server.log: msg="…predicted to exceed
+# available memory, evicting"），表现就是整机一会儿卡一次。
+# 取值依据（2026-10-14 实测 prompt_eval_count）：**一张原图 = 4162 token**（不是 2K），
+# 所以 8192 只有 2 倍余量、太紧；文本那边一批 20 条只要 557~1364 token。取 32768。
+NUM_CTX = 32768
 SYS = (
     "你在帮一位某高校大一新生看群聊里的图片。只看图说话，不要猜。\n"
     "只输出一个 JSON 对象，字段固定：\n"
@@ -178,7 +191,7 @@ def ask(path, timeout=300, sysmsg=SYS, max_side=1568, num_predict=300):
             except Exception:
                 pass
     payload = {"model": MODEL, "stream": False, "think": False,
-               "options": {"temperature": 0, "num_predict": num_predict},
+               "options": {"temperature": 0, "num_predict": num_predict, "num_ctx": NUM_CTX},
                "messages": [{"role": "system", "content": sysmsg},
                             {"role": "user", "content": "看这张图。", "images": [b64]}]}
     req = urllib.request.Request(URL, data=json.dumps(payload).encode("utf-8"),
@@ -279,7 +292,7 @@ def main():
             print("  detail %d/%d ..." % (k, len(d_targets)))
     n_detail = sum(1 for it in d_targets if it.get("detail"))
 
-    L = ["# %s 图片分诊（本地视觉 qwen3.5:9b）" % date, "",
+    L = ["# %s 图片分诊（本地视觉 mimo-v2.6:9b-q6_K）" % date, "",
          "> 共 %d 张 ｜ **需强模型回看 %d** ｜ 判为无信息 %d ｜ 解析失败(fail-open) %d ｜ 总 %.0fs（均 %.1fs/张）"
          % (len(items), len(review), len(noise), len(fail), tot, tot / max(1, len(items))), "",
          "> **细读遍**（阶段 4 第二遍）：对「需回看」的 %d 张再抠一次细节，成功 %d 张、%.0fs（均 %.1fs/张）"

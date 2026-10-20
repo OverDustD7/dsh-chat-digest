@@ -67,7 +67,7 @@ def main():
     ap.add_argument("--date", default="2026-09-14")
     ap.add_argument("--chunk", type=int, default=150)
     ap.add_argument("--max-chunks", type=int, default=0, help="0 = 不限")
-    ap.add_argument("--model", default="qwen3.5:9b")
+    ap.add_argument("--model", default="mimo-v2.6:9b-q6_K")
     ap.add_argument("--compare-only", action="store_true",
                     help="跳过模型调用，直接用已落盘的候选做对账（改对账逻辑时用，省得重跑）")
     a = ap.parse_args()

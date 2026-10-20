@@ -376,7 +376,8 @@ def main():
                      critical=True, empty_ok=True))
     steps.append(run("3h-官网/公众号当日新文章", ["node", os.path.join(SCRIPTS, "day_web_articles.mjs"), date],
                      ["output/window/web_articles_%s.md" % date], check_lines=(1, None), empty_ok=True))
-    # 3i：本地小模型过筛（2026-09-14）—— qwen3.5:9b 逐条二分类「留/丢」，**不花 API token**
+    # 3i：本地小模型过筛（2026-09-14）—— 本机 9B 逐条二分类「留/丢」，**不花 API token**
+    #   （模型名别写在这里：`llm_filter.py` 里是当前那个；2026-10-14 起本机＝mimo-v2.6:9b-q6_K）
     #   实测（09-13 大群随机 200 条）：丢 73.0%、字符 -70.2%、rescued 7、fail-open 0、2.9 秒；
     #   漏率约 5%（人工抽检 45 条）→ 已加白名单兜底（RESCUE）；被丢的原文留在 _units_dropped.md 可回查。
     #   失败/超时一律 fail-open 全留 —— 宁可多留，不许因模型抽风丢信息。
@@ -416,7 +417,8 @@ def main():
     steps.append(run("4b-文件附件索引(双目录)", [VENV_PY, "find_attachments.py", date],
                      ["output/days/%s_files.json" % date], check_lines=(1, None),
                      critical=False, status_map={3: "无微信附件根"}))
-    # 3j：图片分诊（2026-09-14，本地视觉 qwen3.5:9b）—— 图片 token 是全流程最贵的
+    # 3j：图片分诊（2026-09-14，本地视觉模型）—— 图片 token 是全流程最贵的
+    #   模型名在 `vision_triage.py`（2026-10-14 起＝mimo-v2.6:9b-q6_K；换模型只改那一处）。
     #   实测（09-13 全量 75 张）：需强模型回看 38 ｜ **判为无信息 37（49% 可完全不进强模型）** ｜ 失败 0 ｜ 69 秒。
     #   先 PIL 归一化（转 RGB + 限长边 1568 + 重编码 JPEG）再喂：修前 11/75 报 HTTP 400（不是尺寸问题，是格式变体），修后 0。
     #   失败/超时一律 fail-open 并入「需回看」——绝不当 noise 丢掉。
