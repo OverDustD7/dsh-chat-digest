@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""vision_probe.py — 小样本实测：本地 qwen3.5:9b（带 vision）能不能担起"读图"。
+"""vision_probe.py — 小样本实测：本机 9B（带 vision，现 `mimo-v2.6:9b-q6_K`）能不能担起"读图"。
 
 背景（用户 2026-09-14："回顾整个工作流程，看看还有没有可以用本地小模型降本增效的地方"）：
   图片 token 是全流程最贵的；现在"信息图/海报"都要强模型看图。本地模型 capabilities 里有 vision

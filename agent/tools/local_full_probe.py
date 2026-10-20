@@ -2,7 +2,7 @@
 r"""本地小模型跑**一整天**的提炼，再与 DSH 基线对账 —— 决定"能不能把'读+初提'交给本地"。
 
 设计（对应"先小样本实测再定管线"）：
-  · 把当天的分片按 --chunk 行切成块，逐块喂 Ollama qwen3.5:9b，让它挑出候选条目（同 local_extract_probe 的口径）；
+  · 把当天的分片按 --chunk 行切成块，逐块喂 Ollama 的本机 9B（现 `mimo-v2.6:9b-q6_K`），让它挑出候选条目（同 local_extract_probe 的口径）；
   · 全部候选写 output\logs\_local_candidates_<date>.json；
   · 最后与 output\daily\<date>\items.json（DSH 基线）**双向对账**：
       覆盖率 ＝ 基线条目里有多少能被候选命中（6 字片段包含度 ≥0.4）；
