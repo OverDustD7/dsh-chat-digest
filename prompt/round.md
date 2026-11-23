@@ -1,13 +1,13 @@
 【本轮】做 **{date}（今天，CST）**的一轮。**提问规则由宿主按本轮触发原因注入在本条提示词末尾**（手动点「获取」＝允许问一次；自动/补跑＝禁止阻塞，拿不准的写 `{profile}\output\window\round_state.md` 的「待确认价值」一节 ＋ 收尾回报）。**模板里不写触发原因** —— 2026-09-27 实测：写死的那句会让手动轮也被当成自动轮。
-0) **路由：宿主已探好并选好会话，你只核对与回报** —— `GET /chat-feed/api/state?slim=1` 看 `routePick`/`sessThu`/`sessParatera`/`routeProbe`/`ctxRatioThu`。
+0) **路由：宿主已探好并选好会话，你只核对与回报** —— `GET /chat-feed/api/state?slim=1` 看 `routePick`/`sessionId`/`routeProbe`/`ctxRatioThu`。
    **你被唤醒＝那条线路当时是通的**（不通就不会唤醒你、也不动采集指针）；本轮模式见开头（`pipeline` 只跑管线 / `full` 全轮）。**不弹卡片问他要不要用付费线路**（他多半看不到，且"问"要先唤醒付费会话）。
    `routeProbe` 为 null 或带 `err` ⇒ 自己跑 `{py} {agent}\tools\route_probe.py`，按其结论 `POST /chat-feed/api/route-pick {"route":"thu"|"paratera"}` 纠正后再开工。
-   **不要用 selectModel 换供应商**（两个会话各带自己的上下文更干净）。**默认线路＝THU**（窗口已提到 1M）；刷新阈值**以 `/state` 的 `ctxRatioThu` 实时值为准**，提示词里不写死。图片一律走本地视觉线的产物（`_vision.md` / `_vision_detail.json`），别指望自己读图。
-   · **THU 请求体硬上限 ≈ 8 MiB**（madmodel 的 nginx：**8,388,608 字节通过、8,388,609 被 413**，2026-10-01 实测）——超了整轮直接失败，**跟"缩短输出"无关，是单次请求体太大**。所以：原图/扫描件走本地视觉线产物、大 PDF/docx 用本机工具读（`anchor_read.py` / `read_attachment.py`）**只把结论写进上下文**、要贴图给模型就交子代理且只给单张。同机 paratera 试到 32 MiB 都不 413，必要时换线路。
-   · **流式截断是可重试签名**：`Unterminated string in JSON` / `Unexpected end of JSON input` 是 **madmodel 服务端的 SSE 缺陷**（长工具调用参数被劈成两帧），间歇发作、与我们的数据无关；宿主会**自动退避续跑**（5 次、每次 60 秒），**试满就停在原会话**（**不会换线路** —— 换线路等于必然去花 paratera 的钱，用户 2026-10-01 定案）。你遇到时**别改数据、别缩输出**，重试即可；连续失败就把错误原文写进 `round_state.md`。
+   **换线路＝在这条会话上 `selectModel` 换模型**（只有一条常驻会话，不新建会话）；宿主已按 `routePick` 切好，你只核对与回报。**默认线路＝`/state` 里 `routePick` 那条**（当前配置是 OpenCode 1M）；刷新阈值**以 `/state` 的 `ctxRatioThu` 实时值为准**，提示词里不写死。图片一律走本地视觉线的产物（`_vision.md` / `_vision_detail.json`），别指望自己读图。
+   · **单次请求体太大 = 整轮直接失败**（各线路的上限不同，以 DSH 里那份 provider 配置为准；跟"输出太长"无关）。所以：原图/扫描件走本地视觉线产物、大 PDF/docx 用本机工具读（`anchor_read.py` / `read_attachment.py`）**只把结论写进上下文**、要贴图给模型就交子代理且只给单张。同机 paratera 试到 32 MiB 都不 413，必要时换线路。
+   · **流式截断是可重试签名**：`Unterminated string in JSON` / `Unexpected end of JSON input` 是 **用户 服务端的 SSE 缺陷**（长工具调用参数被劈成两帧），间歇发作、与我们的数据无关；宿主会**自动退避续跑**（5 次、每次 60 秒），**试满就停在原会话**（**不会换线路** —— 换线路等于必然去花 paratera 的钱，用户 2026-10-01 定案）。你遇到时**别改数据、别缩输出**，重试即可；连续失败就把错误原文写进 `round_state.md`。
 1) **取数你自己跑**：`{pkg}\pipeline\daily_prep.py {date}`。**步数以 `prep_report.md` 表行数为准，别写死**；开工前读报告头两行自证（`微信登录态`、`数据窗口自证`）—— 微信显示「未登录」＝**今天没有新消息**，不是取数失败，把能做的做完并写明。
 2) **提炼：本机初提 → 审计 → 回原文核 → 你成稿**：`{agent}\tools\local_prepass.py <date>`（本地、0 元）→ `{agent}\tools\prepass_audit.py <date>`（**报「疑似跑飞」的块必须 `--redo <块号>` 补跑** —— 9B 会输出 2 万 token 后归零、静默丢整块，**0 条不等于没内容**）→ 候选逐条 `{agent}\tools\anchor_read.py <片文件> --lines 行号` 回原文核（核不上不许进条目）→ 你一次成稿。**提炼前必读三份视图**（_timeline / _articles / _threads），话题归并必做。
-3bis) **压缩过就回文件核，不许凭印象**：DSH 在 **0.8×窗口**自动压缩（两条线都 1M ⇒ 压缩线 800k），**摘要只留指针不留原文**。记不清的一律回文件/原文核（`anchor_read.py`/`read`/`grep`）。压缩不是错，**凭压缩后的印象下结论**才是。
+3bis) **压缩过就回文件核，不许凭印象**：DSH 在 **0.8×窗口**自动压缩（1M 窗口 ⇒ 压缩线 800k），**摘要只留指针不留原文**。记不清的一律回文件/原文核（`anchor_read.py`/`read`/`grep`）。压缩不是错，**凭压缩后的印象下结论**才是。
 3ter) **每过一个阶段写 `{profile}\output\window\round_state.md`**（覆盖写：已完成/产物路径/下一步/关键事实）—— 压缩不可逆，回这个文件而不是回印象；收尾并进 `docs\debug_<date>.md`。**文件顶部固定留一节「## 需要用户动作」**（2026-10-02 起）：需要他拍板/动手的一行一条，写清"要他做什么 + 依据"，没有就写「无」。**同一件事连续两轮出现时不许只重复一遍** —— 按 `prompt.md` 的「卡点升级」那五条办（回报单独点名 + 本节 + `DEV_NOTES.md` 的「待插件修」）。**同一个「需要你决定」连挂两轮没人答 ⇒ 第三轮起改成"自己按最保守可逆的方案改掉 + 本行写一句『已按 X 改，不合意改回』"，不许再问第六遍**（2026-10-21 用户原话「本地模型早就换了，早就该更新了」）。
 3quater) **归属闸门（都踩过）**：
    · **图片/截图必须回那条消息的前后 2–3 条文本**：图上"写了什么"可信，"是什么意思"不可信（实测：辅导员发自己的课程邮件截图＋「坏了/你给我留了多少算力呢」在开玩笑，被写成"明天去上产业生态学第一课"）。`ocr_sure` 只代表字读得清。**已做进产物**：`{profile}\output\days\<date>_vision_detail.json` 每条 `review[].ctx` 有 `before`/`after`（同群 ±15 分钟）⇒ **判归属只认这里**；`ctx` 空或标 `missing` 的**不许猜**，标「待人工确认」。

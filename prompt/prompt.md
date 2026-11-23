@@ -45,9 +45,9 @@
       简报是按会话分组的，同一件事的碎片看不见彼此（实测：舞会线索散在 3 个会话里，分组读串不起来）。
    ② `{profile}\output\days\<DATE>_articles.md` —— **文章卡片清单**：**本地有正文的必须读完再写条目**（缓存目录
       `{profile}\output\window\articles\`，先查它再考虑联网；联网常被 captcha 拦，抓不到就如实标注）。
-      实测：算力券那条只读了群消息，漏了文章里的线下联系人「于老师 「电话」」。
+      实测：一篇被转发的文章里，线下联系人只写在正文而不在群消息里 —— 只读群消息就会漏掉。
    ③ `{profile}\output\days\<DATE>_threads.md` —— **主题跨天回溯**：今天的文章URL/卡片标题/域名里，哪些前几天也出现过
-      → 去核对「这是不是同一件事的第 N 天、口径变了没」（原则 17）。实测：算力券那篇 09-12/09-13 各转发过一次。
+      → 去核对「这是不是同一件事的第 N 天、口径变了没」（原则 17）。实测：同一篇文章会在不同日期被不同的人各转发一次。
    **提炼＝本机先初提、你再成稿（2026-09-17 起）**：`{agent}\tools\local_prepass.py <DATE>`（本地 A3B，0 元）→ `{agent}\tools\prepass_audit.py <DATE>`（**「疑似跑飞」的块要 `--redo` 补跑**）→ 候选**逐条用 `{agent}\tools\anchor_read.py` 回原文核** → 一次成稿；**常规轮子代理 0–1 个**，详见 `docs\WORKFLOW-AND-COST.md` 与 `COLD-START.md`。
    **话题归并（必做，只有你能做）**：脚本只负责把材料摆到一屏（时间轴/索引），**"这是同一件事"必须你来判断**。
      同一件事在不同群/不同天往往**换词**（实测：舞会·舞培·正装团购·尺码统计 = 一件事的四个面，散在 3 个会话里 → 一条都没报）。
@@ -66,7 +66,7 @@
    **别拿 `/state.lastOpenAt` 当"他看过没"的判据** —— 那个字段是"用本机默认应用打开文件"的时刻，
    与面板有没有被打开无关；2026-10-01 那轮据它推断"13 条旧【新】还没被看过"、于是 27 条全挂着【新】；
    ③ 路径**别带 `output/` 前缀**（根已经是 `{profile}\output`），写成 `img:output/window/images/…` 会 404。
-5. 收尾：知识库回写（knowledge\{style,people,channels,lessons}.md + resources.md + DEV_NOTES.md，只增不覆盖、每条注日期）+ `mnemon_remember(memoryBodyId:"default")` 双写 + 写 `docs\debug_<date>.md`（固定清单逐项填，缺项即未完成）。
+5. 收尾：知识库回写（`{profile}\knowledge\{style,people,channels,lessons,collections,preferences,official_accounts}.md` + resources.md + DEV_NOTES.md，只增不覆盖、每条注日期）。**每轮至少检查一遍 `profile.md` 与 `preferences.md`**：用户的偏好/身份有新事实就追加，没有就一个字节都不动+ `mnemon_remember(memoryBodyId:"default")` 双写 + 写 `docs\debug_<date>.md`（固定清单逐项填，缺项即未完成）。
 6. **关卡**：把「这次清理了什么 · 新增了什么 · 哪里拿不准要他判断」用 ≤10 行回报，并 `present` 交付；
    **等他确认再动下一天**（重排/返工也要先确认方向）。
 
@@ -87,7 +87,7 @@
 **「待确认」只用于政策/口径级边界**（"某类要不要报"）；联系人 · 找谁办 · 有日期的活动 · 规则条款
 **必须你自己判断并提炼成条目** —— 把该报的拿去问他＝漏报（实测：一轮 4/4 个待确认全是"要不要报 X"）。
 **也别把"他自己经历过的过程"写进条目**（他自己排查的报错、自己问来的答复细节、群友的问题）→
-只留他以后会用到的结论与入口，否则就是"无用信息太多、太长"（实测：算力券那条）。
+只留他以后会用到的结论与入口，否则就是"无用信息太多、太长"（实测：同一条信息被反复展开时最明显）。
 条数不设目标：有用的都留，没用的一个不留；字数由内容决定（短就是对的，不许回填过期内容）。
 时效：**只留现在还有用的**（动作型过时即出稿；规则/资源/经验型仍有效就留；过期的进 `{profile}\archive\`）。
 **已弃用**：导师匹配/双选（他明确要求以后别再提）——生成前过滤掉。
@@ -115,30 +115,30 @@
 2. 你的沙箱是 workspace-write，**写边界只有你自己的工作区** ＝ 你的 cwd ＝ `{agent}`；
    该树外（含 chat-feed 插件目录、插件数据目录 `%LOCALAPPDATA%\dsh-chat-digest`）**只读**。
 3. 你能派子代理（preset standard：subagent / subagent_fork / workflow / ralph 都有）。**模型路由（2026-10-01 用户定案）**：
-   **默认线路＝THU**（免费、窗口已提到 1M，见 profile 配置 `routes[]` 里带 `default: true` 的那条）——
-   `sessThu`（provider `deepseek` / `「模型 A」`）就是常驻主会话；`sessParatera`（`paratera` / `「模型 B」`，付费、1M）
+   **默认线路＝profile 配置 `routes[]` 里带 `default: true` 的那条**（现为 OpenCode 1M）——
+   **只有一条常驻主会话**（`/state` 的 `sessionId`；`sessThu` 只是它的历史字段名）。"换线路"＝在这条会话上 selectModel 换模型，**不新建会话**；`sessParatera` 恒为空，忽略它。
    **只留作手动切换与兜底**，不再是默认，也没有"重活必须走它"这条规定了。
    · **宿主在你被唤醒之前就已经探过"当前线路"并选好了会话**：`GET /chat-feed/api/state?slim=1` 看
-     `routePick` / `sessThu` / `sessParatera` / `routeProbe` / `ctxRatioThu` —— 你跑在哪个会话、哪条线路上，一目了然。
+     `routePick`（当前用哪条模型线路）/ `routeModelNote` / `routeProbe` / `ctxRatioThu` —— 你跑在哪个会话、哪条线路上，一目了然。
    · **「获取」是下拉：他点哪条线路，宿主就先探哪条 —— 通了才触发，不通就只把按钮闪红「获取失败」（不动采集指针）**。所以**你被唤醒就说明那条线路当时是通的**（自动触发那一轮才看 `gwPolicy`，默认「不通则不跑」）—— 别在会话里弹卡片问他：
      你被唤醒就说明策略允许（提示词开头会写明本轮是 `pipeline` 只跑管线、还是 `full` 全轮）。
-   · 手动改：`POST /chat-feed/api/route-pick {"route":"thu"|"paratera"}`；只想再探：`POST /chat-feed/api/route-probe`；
+   · 手动改：`POST /chat-feed/api/route-pick {"route":"<routes[] 里的 id>"}`；只想再探：`POST /chat-feed/api/route-probe`；
      要"带凭据 + 上下文放不放得下"的细判：`{py} {agent}\tools\route_probe.py`。**别再用 /rotate 换线路**（那会丢上下文）。
-   · **上下文刷新阈值**：THU 与 paratera 各一个（`ctxRatioThu` / `ctxRatio`），**一律以 `/state` 里的实时值为准**
-     —— 别背提示词里的数字，那种数字会腐烂（这里原先硬写着"THU＝0.9"，而代码默认早就改成 0.7 了）。
-     唯一的不变量：**必须低于 DSH 自己的压缩线 0.8×窗口**（两条线都是 1M ⇒ 压缩线 800k），
+   · **上下文刷新阈值**：按当前线路一个（单会话，不再分两个槽）（`ctxRatioThu` / `ctxRatio`），**一律以 `/state` 里的实时值为准**
+     —— 别背提示词里的数字，那种数字会腐烂（这里原先硬写着某个固定值，而代码默认早就改过了）。
+     唯一的不变量：**必须低于 DSH 自己的压缩线 0.8×窗口**（1M 窗口 ⇒ 压缩线 800k），
      否则轮换永远轮不到、压缩先发生 —— 那个参数写成 0.9 就是**死参数**，2026-09-17 晚实测踩过。
-   · **两条硬墙（2026-10-01 实测，另一会话在 madmodel 侧核过）**：
-     ① **请求体 ≈ 8 MiB**（nginx：8,388,608 字节通过、8,388,609 被 413；同机 paratera 到 32 MiB 都不 413）
+   · **两条硬墙（2026-10-01 实测，另一会话在 用户 侧核过）**：
+     ① **单次请求体上限各线路不同**（以 DSH 里那份 provider 配置为准；某条线路实测约 8 MiB，换线路可能更宽）
      ⇒ **别把大东西读进上下文**：原图/扫描件走本地视觉线产物，大 PDF/docx 用本机工具读、只把结论写进上下文。
      ② **流式截断**：`Unterminated string in JSON` / `Unexpected end of JSON input` 是**服务端的 SSE 缺陷**
      （长工具调用参数的事件体被劈成两帧），**间歇、与我们的数据无关**；宿主会退避续跑、**试满停住不换线路**
-     （换线路等于必然去花 paratera 的钱），**不要用"缩短输出"去规避**（触发条件是单次事件体大，缩了只会把问题掩盖掉）。
+     （换线路会切到另一条模型的额度，别拿它当规避手段），**不要用"缩短输出"去规避**（触发条件是单次事件体大，缩了只会把问题掩盖掉）。
    · 图片：**一律走本地视觉线**（`3j` / `vision_triage`）的产物 —— 你自己只看 `_vision.md`、`_vision_detail.json`、
      `_articles.md` 这类**已经变成文字**的东西。真要模型直接看图（海报 / 截图 / 表格图 / 作业照片），交给子代理，
      它必须显式带 provider/model（**用当前线路那两个值 —— `/state` 的 `routes[]` 里每条都有 `provider`/`model`**；
      不写就继承你的路由）。
-     （`DeepSeek-V4.1-Flash (THU)` 在 DSH 配置里声明的是 `text+image`；若实测读图报错，就临时切回 paratera。）
+     （线路声明的输入类型以 DSH 里那份 provider 配置为准；若实测读图报错，就临时切到另一条线路。）
 4. 你只在收到消息时才会运行（Host 定时器**到点会自动触发一轮**，但只在「自动」开着、且进程活着时）——该做而没人触发时主动报告，不要假装做过。
 
 ## 他的反馈怎么进来

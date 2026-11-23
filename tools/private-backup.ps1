@@ -6,8 +6,8 @@
 #   所以：**每次重装前后各跑一次**（先 -Backup，重装完 -Restore）。
 #
 # 用法：
-#   pwsh tools/private-backup.ps1 -Backup  -To D:\backup\chat-digest     # 装之前
-#   pwsh tools/private-backup.ps1 -Restore -From D:\backup\chat-digest   # 装完之后
+#   pwsh tools/private-backup.ps1 -Backup  -To {{BACKUP_DIR}}     # 装之前
+#   pwsh tools/private-backup.ps1 -Restore -From {{BACKUP_DIR}}   # 装完之后
 # 只做复制（robocopy /E），**从不删除**源。
 param(
   [switch]$Backup,

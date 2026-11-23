@@ -170,6 +170,7 @@ for frag in ("const DIR =", "const WAKE_TEXT =", "apply(ctx)",
              #   交给该扩展名的默认应用；闸门与 `/api/file` 同一套（信任栅栏 + 允许根 + 必须真实存在）。
              #   丢了它，链接会退回"浏览器再下载一份"。
              "const spawnOpen = async", "routeOk.open = route('POST', 'open'", "cmd-start",
+             "ENV && ENV.ComSpec", "ENV && ENV.SystemDrive",
              "lastOpenOk", "所有文件都用本机默认应用打开",
              # A21/A22（2026-09-22 用户问"为什么昨天还是没有自动获取"）：
              #   实测 2026-09-21 23:30 那轮：23:35:59 调 `ask_user_question` → 一直等 → 90 秒后
@@ -259,6 +260,8 @@ for frag in ("const DIR =", "const WAKE_TEXT =", "apply(ctx)",
              "【提问规则·代码注入】", "只有这种轮允许提问",
              # A68：提示词在**发车那一刻**从磁盘读（改提示词不必再重启宿主）
              "const renderRound = (tpl, date, reason, since, mode)", "const readPromptNow = async (name, privateSide)",
+             "if (S.stateLoading || S.stateReadBlocked)", "if (await saveState() !== 'saved')",
+             "const pol = privatePolicy();",
              "const roundPromptLive = async (date, reason, since, mode)", "await roundPromptLive(date, reason,",
              "const body = (typeof tpl === 'string' && tpl) ? TPL(tpl, date, mode, since)",
              "return TPL(body + ask, date, mode, since)"):

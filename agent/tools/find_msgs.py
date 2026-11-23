@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """find_msgs.py — 在当天产物里按关键词找原始消息（只读）。
 
-用法: python tools\\find_msgs.py 2026-09-13 "算力券|限流|TPM" [最多条数] [每条字符数]
-      python tools\\find_msgs.py 2026-09-12,2026-09-13 "算力券" 40
+用法: python tools\\find_msgs.py <日期> "关键词A|关键词B" [最多条数] [每条字符数]
+      python tools\\find_msgs.py <日期1>,<日期2> "关键词A" 40
 """
 import datetime as dt
 import io

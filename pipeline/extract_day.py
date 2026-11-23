@@ -53,7 +53,7 @@ QQ = os.environ.get("QQ_EXPORT") or os.path.join(HERE, "output", "qq", "nt_msg_e
 OUTD = os.path.join(HERE, "output", "days")
 os.makedirs(OUTD, exist_ok=True)
 SELF_WX = SELF_WXID
-SELF_QQ = C.req("self_qq", "你的 QQ 号")
+SELF_QQ = C.get("self_qq")
 
 if len(sys.argv) < 2:
     raise SystemExit("extract_day.py: 缺日期参数（用法：extract_day.py YYYY-MM-DD）")

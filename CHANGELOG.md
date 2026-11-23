@@ -3,6 +3,72 @@
 All notable changes to this package. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.3] — 2026-11-24 (unreleased)
+
+- Keep the panel, inbox and import pipeline in the npm candidate. Run optional import with an external
+  Python environment, a user-supplied WeChat decryptor and a QQ adapter/exporter outside the package.
+- Use `pythonRuntime: legacy` by default. The explicit `bundled` mode remains available for separately
+  assembled local copies. See the README for migration and rollback from a private 1.5.2 build.
+- Report missing import dependencies at the affected step. Skip QQ export when the current QQ decrypt
+  step fails, keeping previous exports intact.
+- Check the actual npm archive against the explicit file list and reject bundled runtime or vendor assets.
+- Stop truncating at write time: `pipeline/extract_window.py`'s `wx_text_summary()` keeps plain text whole and
+  parses type-87 group announcements (`<datatitle>` / `<datadesc>`), whose body and links usually start after
+  the first 800 characters. Reproduce with a two-message fixture: a type-87 announcement whose title sits
+  before the cut and whose description plus URL sit after it (see the synthetic case in the issue thread);
+  before the fix the tail is dropped, after it both parts survive.
+- `agent/tools/split_day.py` now carries `raw`; `agent/tools/units_day.py`'s `clip()` compares against the
+  **raw length** instead of 800 and takes head and tail from `raw`, so the earlier tail-recovery path can
+  actually fire on data that was already flattened upstream.
+- `pipeline/pconf.py`'s `external_tool()` resolves in three steps: exact path, then `external_tool_map`, then a
+  bounded name search under `external_dir`. This fixes the QQ step failing when the decrypt adapter lives in
+  a differently named subdirectory of the configured tools directory instead of the one folder the old code
+  assumed; a genuinely missing tool still fails explicitly and
+  lists what was tried.
+- The sidebar entry no longer expands: the Fetch and Auto buttons moved into the panel's top bar, to the left
+  of the daily auto-collect time. The `.cfw-acc` accordion, its `⋯` trigger and the row-gap compensation code
+  are gone; the buttons are rebuilt on every render instead of only while the old box was open.
+- Single resident session. There is no second slot any more: switching route means calling `selectModel` on
+  the one session, so the second session slot, its adoption path and its title matching are gone from the
+  flow (`sessThu` stays as a historical field name only; `sessParatera` is always empty). `SLOTS_VER` moved to
+  5 so an existing install collapses the old pair on the next mount.
+- A round that ends with `completed` now closes its own accounting even when the panel gained no items, so
+  the cursor advances instead of leaving the day permanently "owed" and re-triggering a full round on every
+  start. Startup also gets a 15-minute grace before any missed round is caught up, rate-limit failures are no
+  longer retried automatically, and a day is capped at 3 rounds.
+- Resolve state writes through DSH's sandbox policy for the matched live session. Keep an explicit
+  read-only policy in force. A failed state read or save suspends automatic dispatch, catch-up and retry.
+  Item endpoints acknowledge a cursor only after its snapshot reaches disk. A normally ended turn
+  without a saved delivery keeps the previous cursor.
+- A blocked persist now stops dispatch: the gate moves ahead of the salvage branch, and the abnormal-exit
+  "继续" retry requires it too. `/items` and `/items-patch` only report success and advance the collection
+  cursor after `saveState()` really succeeded; on failure the cursor is rolled back and the call reports
+  `ok: false` with the item list left in memory only.
+- Stop sending the same round prompt twice in one night. The salvage path used to fire purely on the polled
+  `busy` flag; when that flag went false while the turn was still running, the full 1,073-line prompt was
+  queued and delivered the moment the turn ended. Now the salvage check asks the session itself whether a
+  turn is still open (and refuses when the controller cannot be read), fires at most once per undelivered
+  round, sends a short "finish and write the items back" note instead of the whole template, and keeps the
+  cursor at the original round's start instead of its own fire time.
+
+## [1.5.2] — 2026-10-26 (private runtime candidate)
+
+- **缺省解释器模式翻成 `bundled`**：包内自带 `runtime/win32-x64/`（Python 3.14.9 嵌入式 + 14 个公开 wheel +
+  微信 6 / QQ 21 个供应商 `.py`），缺省就走它。`legacy`（`python` 配置 → `DSH_CHAT_FEED_PY` → 当前解释器）
+  必须显式写出。理由：缺省借外部解释器会让一台没配过 `python` 的机器悄悄用 PATH 里那个 ——
+  自包含在配置文件里成立、在行为上不成立。没有 runtime 时缺省模式直接失败（`E_RUNTIME_DIR_MISSING`），不回落；
+  配置里留着旧的 `python` / `external_dir` 也不会被借用。
+- 空串 / `null` 按 schema 的缺省语义处理（＝ `bundled`）；未知取值与错误类型（`true` / `1` / 对象）仍然报错。
+- `package.json` 的 `files` 增加 `runtime`；私人目录、`account_keys.json`、`.env`、`db`、`log`、`__pycache__`
+  的否定项一个都没放松。
+- **发布门禁 v3**（`tools/gate-publish.py`）：runtime 内容按 `test/runtime-assets.lock.json` 的冻结清单
+  逐文件核大小与 sha256，未知 / 改动 / 缺失都阻断，清单不在门禁里现场生成；临时根改成每次运行新建的
+  唯一目录（不再无条件 `rmtree` 共享的 `%TEMP%\cf-gate2`）；tar 解包前逐条目校验（绝对路径 / 点点 /
+  链接 / 设备 / ADS 冒号 / 保留设备名 / 尾随点空格 / 大小写冲突）；诊断输出不再回显标记原文或其前缀，
+  只给计数、`file:line` 与不透明标记编号。规则拆成纯函数，可在不跑 npm、不读私人配置的 fixture 里验。
+- `test/portability-checks.mjs`：旧 legacy 夹具改为显式 `pythonRuntime: 'legacy'`，新增缺省 `bundled` 断言
+  （含"配置里留着旧 python 也不许借外部解释器"与"没有 runtime 时缺省模式同样失败"）。
+
 ## [1.5.1] — 2026-09-29
 
 - **侧栏入口行改由客户端插件注册进壳的槽位**（`lib/client.js` + `package.json` 的 `dsh.client` / `exports["./client"]`）：

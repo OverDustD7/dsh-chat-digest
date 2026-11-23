@@ -118,34 +118,35 @@ rec('C09_ui_exposes_open_panel_hook',
   ui.includes('window.__cfwUi = {') && ui.includes('openPanel: openPanel'), '')
 rec('C10_ui_skips_own_row_when_shell_provides_one',
   /window\.__cfwSidebarRow === true\) \{ ensureShellRowMore\(\); return \}/.test(ui),
-  '壳给了行：不再自己插行，只补 ⋯')
-// 壳的行是 React 渲染的，⋯ 是外来的；被冲掉要能补回来，且补的时候必须幂等（观察器会反复调）。
-rec('C12_ui_restores_the_more_button_idempotently',
+  '壳给了行：不再自己插行')
+// 2026-11-15（用户要求删掉侧栏折叠-展开）：「获取 / 自动」搬到面板右栏顶部横条，
+//   侧栏那一行不再挂任何外来节点（⋯ 已删）。这条钉住"侧栏行保持干净"这个新契约。
+rec('C12_sidebar_row_carries_no_foreign_node',
   ui.includes('function ensureShellRowMore()')
-  && ui.includes("row.querySelector('.cfw-more2') !== null")
+  && !ui.includes("className = 'cfw-more2'")
   && ui.includes('querySelector(\'[data-dsh-panel-entry="chat-digest"]\')'),
-  '⋯ 幂等补回（拿我们图标上的标记反查壳的行）')
+  '壳的行只用来定位 entryRow，不再往里补 ⋯')
 rec('C13_cleanup_only_removes_our_own_row',
   /entryRow\.getAttribute\(ENT_ATTR\) !== null\) entryRow\.parentNode\.removeChild/.test(ui),
   'cleanup 不会删掉壳渲染的那一行')
-// 壳的面板列表是带 gap 的 flex 列：折叠区那个 0 高度的盒子也白占一个 gap（用户报「巨大缝隙」）；
-// 展开时父列的 row-gap 会在它上下各留一次 ⇒ 还要用负 margin 抵掉，才能贴住入口行。
-rec('C14_collapsed_expander_leaves_no_flex_gap_in_shell_mode',
-  ui.includes('function syncAccDisplay()')
-  && ui.includes("accEl.style.display = 'none'")
-  && ui.includes("if (!shellMode()) { accEl.style.display = ''; accEl.style.marginTop = ''; accEl.style.marginBottom = ''; return }"),
-  '折叠时摘出布局；非壳模式一字未改')
-rec('C16_expander_compensates_parent_row_gap',
-  ui.includes('function parentRowGap()') && ui.includes('accEl.style.marginTop = neg')
-  && ui.includes('accEl.style.marginBottom = neg'), '用父列 row-gap 的负 margin 贴住入口行')
-// 2026-09-29 真机实测：折叠区从 display:none 展开时自身宽度是变的（252→256）⇒ **不能量它自己**；
-// 必须用两个稳定盒子（父列的可用宽度 vs 行的宽度）算差，否则当场量到 0 差、左右各多出 2px。
-rec('C17_expander_aligns_by_parent_row_boxes_not_its_own_rect',
-  ui.includes('var baseL = parR.left + (parseFloat(pcs.paddingLeft) || 0)')
-  && ui.includes('var baseR = parR.right - (parseFloat(pcs.paddingRight) || 0)')
-  && ui.includes('var dl = +(rowR.left - baseL).toFixed(1)')
+// 2026-11-15：折叠区（.cfw-acc / grid-template-rows 0fr↔1fr / 负 margin 对齐）整套删掉。
+//   新契约是「按钮排在右栏横条里、自动时间行左边」，所以这里改钉三条真实边界：
+//   ① 不再创建折叠区 DOM；② 按钮槽插在自动时间槽前面；③ 渲染不再被"是否展开"门禁。
+rec('C14_no_accordion_dom_in_the_sidebar',
+  !ui.includes("className = 'cfw-acc'")
+  && !ui.includes('function syncAccDisplay()')
+  && !ui.includes('function parentRowGap()'),
+  '侧栏折叠区已删除（不再创建 .cfw-acc、不再算 row-gap）')
+rec('C16_buttons_sit_left_of_the_auto_row_in_the_panel_bar',
+  ui.includes('rbar.append(slots, autoSlot, clr)')
+  && ui.includes("slots.className = 'cfw-rslot cfw-rslot-btn'")
+  && ui.includes('btnSlot = slots'),
+  '横条顺序＝(获取,自动) → 自动采集时间行 → 删除已勾选')
+rec('C17_buttons_render_into_the_panel_slot_without_an_open_gate',
+  ui.includes('if (btnSlot === null || !btnSlot.isConnected) return')
+  && /if \(btnSlot !== null && btnSlot\.isConnected\) renderAcc\(\)/.test(ui)
   && !ui.includes('__cfwAccDbg'),
-  '按父列/行算；且没有留下临时调试')
+  '渲染目标是面板槽；render 每次都重建按钮，不再看"折叠区开没开"')
 // 返回（2026-09-29 用户报「返回的逻辑怎么又坏了」）：首页那行「新会话」**也会**被标 aria-selected=true，
 // 必须排除；否则返回时满侧栏找一个叫"新会话"的 sessionRow，找不到就放弃，人被丢在常驻会话里。
 // 真机实测两个场景：会话→面板→返回 = 回那个会话；首页→面板→返回 = 回首页。
@@ -187,10 +188,12 @@ rec('C19_back_uses_session_id_before_title_matching',
   && ui.includes("prevSessionTitle = ''; prevSessionId = ''")
   && ui.includes('prevSessionId === ownId'),
   'id 那条路排在标题匹配与 goHome 之前（首页同样先走 id）；keepNav/已在常驻会话时不还原')
-rec('C15_close_keeps_the_transition_then_drops_the_box',
-  ui.includes('accCloseTimer')
-  && /setTimeout\(function \(\) \{ accCloseTimer = null; syncAccDisplay\(\) \}, 320\)/.test(ui),
-  '收起先跑完过渡，320ms 后再摘盒子')
+// 2026-11-15：收起过渡 + 320ms 摘盒子的逻辑随折叠区一起删。改成钉"面板建好就立刻渲染按钮"，
+//   否则首次打开面板时两个按钮会空着等下一次 15 秒轮询。
+rec('C15_panel_creation_renders_the_buttons_immediately',
+  /try \{ renderAcc\(\) \} catch \(e\) \{\}/.test(ui)
+  && !ui.includes('accCloseTimer'),
+  'ensurePanel 末尾直接渲染按钮；没有残留的折叠计时器')
 const body = fs.readFileSync(path.join(PKG, 'lib', 'host-body.txt'), 'utf8')
 rec('C11_host_still_injects_ui_js',
   /indexOf\(SCRIPT_UI\)\s*<\s*0/.test(body), '面板路径没被动过')

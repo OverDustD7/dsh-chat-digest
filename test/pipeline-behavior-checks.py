@@ -33,14 +33,23 @@ with contextlib.redirect_stdout(buf):
     record('P01_decrypt_all_missing_fails',True,isinstance(decrypt_rc,int) and decrypt_rc!=0)
     import time
     stale=OUT/'fixtures/stale.txt';stale.parent.mkdir(parents=True,exist_ok=True);stale.write_text('old output\n',encoding='utf-8');os.utime(stale,(1,1))
-    env=dict(time=time,os=os,HERE=str(OUT),SCRIPTS=str(OUT),out_dir=lambda: str(OUT),subprocess=types.SimpleNamespace(run=lambda *a,**k:types.SimpleNamespace(returncode=0,stdout=''),TimeoutExpired=subprocess.TimeoutExpired))
+    env=dict(time=time,os=os,HERE=str(OUT),SCRIPTS=str(OUT),out_dir=lambda: str(OUT),
+             python_argv=lambda args, _: args,VENV_PY='python',_script_index=lambda args: -1,
+             _argv_display=lambda args: 'test',_redact_known_key=lambda args, text: text,subprocess=types.SimpleNamespace(run=lambda *a,**k:types.SimpleNamespace(returncode=0,stdout=''),TimeoutExpired=subprocess.TimeoutExpired))
     res=function(CI/'daily_prep.py','run',env)('synthetic-noop',['test'],[str(stale)])
     record('P02_stale_artifact_rejected',True,res['status']!='ok')
     # Current orchestrator with every external step mocked failed: its process-success result remains None.
     tmp=OUT/'fixtures/daily';tmp.mkdir(parents=True,exist_ok=True)
-    env=dict(sys=types.SimpleNamespace(argv=['daily_prep.py','2026-09-20']),dt=dt,TZ=dt.timezone(dt.timedelta(hours=8)),os=os,HERE=str(tmp),SCRIPTS=str(tmp),TOOLS=str(tmp),VENV_PY='python',NT_UTIL='export.py',WX_KEY='synthetic',QQ_KEY='synthetic',QQ_SRC='synthetic',run=lambda label,*a,**k:dict(step=label,status='FAILED',seconds=0,notes=[]),img_key_note=lambda _:[],check_url_coverage=lambda _:('CHECK-FAILED',[]),day_window=lambda _:(0,'?','?'),wx_login_line=lambda :'synthetic',MAIN_GROUP='synthetic',QQ_STALE_DAYS=3.0,qq_source_state=lambda:(0.1,'synthetic'),mark_qq_stale=lambda *a,**k:False)
+    env=dict(sys=types.SimpleNamespace(argv=['daily_prep.py','2026-09-20']),dt=dt,TZ=dt.timezone(dt.timedelta(hours=8)),os=os,HERE=str(tmp),SCRIPTS=str(tmp),TOOLS=str(tmp),VENV_PY='python',EXTERNAL_TOOL_UNAVAILABLE=78,external_tool=lambda *a,**k:'export.py',WX_KEY='synthetic',QQ_KEY='synthetic',QQ_SRC='synthetic',run=lambda label,*a,**k:dict(step=label,status='FAILED',seconds=0,notes=[]),img_key_note=lambda _:[],check_url_coverage=lambda _:('CHECK-FAILED',[]),day_window=lambda _:(0,'?','?'),wx_login_line=lambda :'synthetic',MAIN_GROUP='synthetic',QQ_STALE_DAYS=3.0,qq_source_state=lambda:(0.1,'synthetic'),mark_qq_stale=lambda *a,**k:False)
+    calls=[]
+    def failed_step(label, *args, **kwargs):
+        calls.append(label)
+        return dict(step=label,status='FAILED',seconds=0,notes=[],critical=kwargs.get('critical', False))
+    env['run']=failed_step
     rc=function(CI/'daily_prep.py','main',env)()
     record('P03_all_steps_fail_nonzero_exit',True,isinstance(rc,int) and rc!=0)
+    record('P03b_failed_qq_decrypt_does_not_export',True,
+           '2-QQ解密+导出' in calls and '2b-QQ结构化导出' not in calls)
     # Export unknown ids against a synthetic existing deliverable.
     tmp=OUT/'fixtures/export';target=tmp/'output/daily/2026-09-20/items.json';target.parent.mkdir(parents=True,exist_ok=True);target.write_text('[{"id":"preserve"}]',encoding='utf-8')
     import argparse
@@ -78,11 +87,23 @@ with contextlib.redirect_stdout(buf):
     out=(prof/'output/days/2026-09-20.jsonl')
     lines=out.read_text(encoding='utf-8').splitlines() if out.is_file() else []
     record('P05_qq_group_and_private_extracted',2,len(lines))
-    src=OUT/'fixtures/source.db';dst=OUT/'fixtures/clear.db'
-    src.write_bytes(b'H'*1024+b'new-content');dst.write_bytes(b'old-content')
-    env=dict(HEADER_SIZE=1024,pathlib=pathlib)
-    function(CI/'qq_decrypt_hex.py','strip_header',env)(src,dst)
-    record('P06_same_size_qq_cache_refreshed',True,dst.read_bytes()==b'new-content')
+    # P06 now checks the shipped launcher. The former decryption implementation lives outside the package.
+    ext = tmp/'external'
+    adapter = ext/'nt_msg_db_util'/'qq_decrypt_hex.py'
+    adapter.parent.mkdir(parents=True)
+    adapter.write_text('import pathlib, sys\npathlib.Path(sys.argv[3]).write_text(sys.argv[2])\n', encoding='utf-8')
+    with (prof/'pipeline.yaml').open('a', encoding='utf-8') as f:
+        f.write('external_dir: "' + ext.as_posix() + '"\n')
+    shutil.copy2(CI/'qq_decrypt_hex.py', mini/'pipeline'/'qq_decrypt_hex.py')
+    target = prof/'launcher-output.txt'
+    args = [sys.executable, '-B', str(mini/'pipeline'/'qq_decrypt_hex.py'), 'synthetic', 'source', str(target)]
+    executed = subprocess.run(args, capture_output=True, env=env2, cwd=prof)
+    record('P06_external_adapter_called', (0, 'source'),
+           (executed.returncode, target.read_text() if target.is_file() else None))
+    adapter.unlink()
+    missing = subprocess.run(args, capture_output=True, env=env2, cwd=prof)
+    record('P06b_missing_external_adapter', (78, True),
+           (missing.returncode, b'E_EXTERNAL_TOOL_REQUIRED' in missing.stderr))
     # A62（2026-09-27 用户定案）：**QQ 源库陈旧/缺失不许再报 ok**。
     #   实测 2026-09-19~09-26 连续 8 天 QQ 0 条，而「2-QQ解密+导出」「2b-QQ结构化导出」
     #   两步每天报 `ok` —— 这条支线断了 8 天，报告里一个字都没有。判据：源库 mtime。

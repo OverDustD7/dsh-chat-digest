@@ -145,11 +145,14 @@ const ctxRatioOf = (route) => (String(route) === String(R0)
 
 const S = {
   auto: false, autoTime: '23:00', busy: false, lastCollectAt: 0, lastCount: 0,
+  // A108（2026-11-21）：挂载时刻。用来给"欠账补跑"加一段启动宽限 ——
+  //   否则宿主一崩一重启，它就立刻拉着跑一整轮（实测 2026-11-21 20:55:48 启动、20:56:40 就发车）。
+  mountedAt: Date.now(),
   // 「获取」/「自动」两个按钮的状态（2026-09-13 接线）：
   //   busy 由"轮询 turn/end 计数"判定（动态插件的 ctx.on 订阅不到宿主事件，见 DEV_NOTES）
   //   collectDay / autoFiredDay 用 CST 的 YYYY-MM-DD 做"每天只跑一次"去重
   panelMtime: null, panelCache: null,
-  busySince: 0, busyBase: null, busyFor: '', busySawOpen: false, lastDoneAt: 0, collectDay: '', autoFiredDay: '',
+  busySince: 0, busyBase: null, busyFor: '', busySawOpen: false, busyProbeFail: 0, lastDoneAt: 0, collectDay: '', autoFiredDay: '',
   // autoWhy：**最近一次自动 tick 为什么没跑**（2026-09-21 加，见 A19）。它只在内存里、每 30 秒重写一次，
   //   由 `/state` 回显 —— 用户问「启用了自动今天却没有自动」时必须能一眼看出卡在哪一条判据上。
   //   A98（2026-10-01）：**它现在也落盘**（原来只在内存 ⇒ 重启后"昨晚卡在哪"就查不出来了）。
@@ -169,7 +172,7 @@ const S = {
   pendingAsk: null, resumeCount: 0,
   // 异常退出自动续跑（2026-09-17 晚）：autoRetry 是总开关，retryCount 是本轮已续跑次数（跑完归零）
   autoRetry: true, retryCount: 0, lastRetryAt: 0,
-  // A102（2026-10-01）：**流式截断签名**（madmodel 服务端把长工具调用参数的事件体劈成两帧）——
+  // A102（2026-10-01）：**流式截断签名**（用户 服务端把长工具调用参数的事件体劈成两帧）——
   //   `retryAt`＝退避到什么时候（只对那个签名生效）；`streamFlakyCount/streamErrors`＝命中次数与最近 8 条原文；
   //   `routeModelNote/routeModelAt`＝最近一次 setRouteModel 的结果（配置里的 `routes[].model` 到底有没有被采用）。
   retryAt: 0, streamFlakyCount: 0, lastStreamError: '', lastStreamErrorAt: 0, streamErrors: [],
@@ -177,6 +180,7 @@ const S = {
   sessionId: '', note: '骨架版：真实采集待接入', seeded: false,
   items: DEMO_ITEMS.slice(),
   lastError: '', lastRouteError: '', lastSaveOk: true, renamedAs: '',
+  stateLoading: true, stateReadBlocked: false, saveBlocked: false,
   mainSessionId: '',
   // 按会话记"已经发过初始化说明"（S.seeded 是全局布尔，会话一失效就被置回 false，
   // 于是新认领的旧会话会被再灌一遍 wakeText —— 用户报"每点一次就多发一次提示词"）
@@ -294,59 +298,94 @@ return {
         } catch (e) { /* 读不到/解析不了 ⇒ 不判断（fail-open，见上） */ }
         return '';
       };
-      const saveState = async () => {
+      // A112（2026-11-23）：把"插件自己那条会话"的沙箱策略取出来，供 fs.writeText 的第 5 个参数用。
+      //   宿主插件不属于任何会话 ⇒ 省略策略时 checkedTarget 走 `ctx.sandboxPolicy.resolve()`（无 session），
+      //   用的是部署配置的 workspaceRoot（默认 process.cwd()），**与用户当前看哪个页面无关**；
+      //   私人根不在那底下 ⇒ 必然 FS_SANDBOX_DENIED。
+      //   正式接口：`sessions.get(id)` 拿到**已加载的真实 Session**，确认它的 header.cwd 就是私人物理根，
+      //   再 `sandboxPolicy.resolve({ session })` —— 原样使用，绝不自己拼策略、绝不放宽模式。
+      //   拿不到真实 Session / cwd 不匹配 ⇒ 返回 null（退回部署默认）；会话只读时保留只读策略。
+      const privatePolicy = () => {
         try {
-          const payload = { schema: STATE_SCHEMA, sessionId: S.sessionId, mainSessionId: S.mainSessionId, auto: S.auto, autoTime: S.autoTime, lastCollectAt: S.lastCollectAt, seeded: S.seeded, seededFor: S.seededFor, items: S.items,
-            busy: S.busy, busySince: S.busySince, busyBase: S.busyBase, busyFor: S.busyFor || '', busySawOpen: !!S.busySawOpen, lastDoneAt: S.lastDoneAt, collectDay: S.collectDay, autoFiredDay: S.autoFiredDay,
-            autoRetry: S.autoRetry !== false, retryCount: Number(S.retryCount || 0), lastRetryAt: Number(S.lastRetryAt || 0),
-            // A102：流式截断签名的现场（退避时刻、命中次数、最近几条原文、setRouteModel 的结果）
-            retryAt: Number(S.retryAt || 0), streamFlakyCount: Number(S.streamFlakyCount || 0),
-            lastStreamError: String(S.lastStreamError || ''), lastStreamErrorAt: Number(S.lastStreamErrorAt || 0),
-            streamErrors: Array.isArray(S.streamErrors) ? S.streamErrors.slice(-8) : [],
-            routeModelNote: String(S.routeModelNote || ''), routeModelAt: Number(S.routeModelAt || 0),
-            // A19：`note`（最近一次动作的人话）与 `autoFiredAt`（上次自动触发时刻）以前**没持久化** ⇒
-            //   重启后 note 退回默认值"骨架版：真实采集待接入"，看起来像"什么都没发生过"。
-            note: String(S.note || ''), autoFiredAt: Number(S.autoFiredAt || 0),
-            // A98：自动"为什么没跑/为什么没触发成"要跨重启活下来（含失败退避与失败原文）
-            autoWhy: String(S.autoWhy || ''), autoFireRetryAt: Number(S.autoFireRetryAt || 0), autoFireRetryTries: Number(S.autoFireRetryTries || 0),
-            autoFireDueKey: String(S.autoFireDueKey || ''), autoLastOkAt: Number(S.autoLastOkAt || 0),
-            lastTriggerError: String(S.lastTriggerError || ''), lastTriggerErrorAt: Number(S.lastTriggerErrorAt || 0),
-            ctxAuto: S.ctxAuto, ctxRatio: S.ctxRatio, ctxFallback: S.ctxFallback, ctxCooldownMs: S.ctxCooldownMs,
-            ctxTokens: S.ctxTokens, ctxWindow: S.ctxWindow, ctxLimit: S.ctxLimit, ctxPct: S.ctxPct,
-            ctxChecks: S.ctxChecks, ctxSkips: S.ctxSkips, ctxRotations: S.ctxRotations,
-            ctxLastRotateAt: S.ctxLastRotateAt, ctxLastRotateTurn: S.ctxLastRotateTurn,
-            // A23：轮换留痕 + 多出来的同标题主 agent（都要跨重启活下来，否则"上次为什么没归档"重启后就没了）
-            ctxLastRotateWhy: String(S.ctxLastRotateWhy || ''), ctxLastRotateOk: (S.ctxLastRotateOk === null || S.ctxLastRotateOk === undefined) ? null : !!S.ctxLastRotateOk,
-            ctxLastRotateArchived: String(S.ctxLastRotateArchived || ''), ctxLastRotateErr: String(S.ctxLastRotateErr || ''),
-            ctxLastRotateSteps: Array.isArray(S.ctxLastRotateSteps) ? S.ctxLastRotateSteps.slice(0, 24).map(String) : [],
-            extraMains: Array.isArray(S.extraMains) ? S.extraMains.slice(0, 30) : [], extraMainsAt: Number(S.extraMainsAt || 0),
-            // 双会话（2026-09-17）：**这几行少了，重启后槽就空 ⇒ 又重新 adopt/create 一个会话**（实测踩过）
-            sessThu: S.sessThu || '', sessParatera: S.sessParatera || '',
-            // A63：派发的正向断言要跨重启活下来（漏进白名单 = 重启后又把一轮发给老 cwd 的会话）
-            cwdTag: String(S.cwdTag || ''),
-            cwdMade: Array.isArray(S.cwdMade) ? S.cwdMade.slice(-12).map(String) : [],
-            routePick: S.routePick || '', inbox: INBOX_DIR, routes: ROUTES.map(function (r) { return { id: r.id, label: r.label, menuName: r.menuName || '', hint: r.hint || '', provider: r.provider || '', model: r.model || '', 'default': !!r['default'] } }),
-    routeAt: S.routeAt || 0, routeWhy: S.routeWhy || '',
-            ctxRatioThu: (S.ctxRatioThu === undefined ? 0.7 : S.ctxRatioThu),
-            slotsInitAt: S.slotsInitAt || 0, slotsInitVer: S.slotsInitVer || 0,
-            slotsInitSteps: Array.isArray(S.slotsInitSteps) ? S.slotsInitSteps.slice(0, 40) : [],
-            routeNeedsConfirm: !!S.routeNeedsConfirm, routeProbe: S.routeProbe || null,
-            gwPolicy: S.gwPolicy || 'skip', gwDownAt: S.gwDownAt || 0, gwDownReason: S.gwDownReason || '',
-            gwRunAt: S.gwRunAt || 0, gwRunMode: S.gwRunMode || '',
-            // A04（2026-09-20 审计 H06）：**"请求采集"与"采集完成"分开存**。
-            //   旧版在 sc.prompt 之后立刻写 lastCollectAt/collectDay ⇒ 只是"入队成功"就被记成
-            //   "采集到现在"，中断/取数失败/没交付都会留下**再也不会被覆盖的空洞**。
-            //   现在 pendingCollect 记"已请求但还没交付"，只有面板真被回写（取数+交付通过）才提交游标。
-            pendingCollect: S.pendingCollect || null,
-            // A21/A22：未交付轮的补跑计数 + 主 agent 未回答的提问（都要能跨重启活下来，
-            //   否则"昨晚它问了什么"重启后就查不到了）
-            resumeCount: Number(S.resumeCount || 0),
-            pendingAsk: S.pendingAsk
-              ? { callId: String(S.pendingAsk.callId || ''), at: Number(S.pendingAsk.at || 0),
-                  stale: !!S.pendingAsk.stale,
-                  questions: Array.isArray(S.pendingAsk.questions) ? S.pendingAsk.questions.slice(0, 4) : [] }
-              : null };
-          const text = JSON.stringify(payload, null, 2);
+          const sessions = ctx.get('sessions'), sp = ctx.get('sandboxPolicy');
+          if (!sessions || !sp || typeof sp.resolve !== 'function') return null;
+          const sid = String(S.sessionId || '');
+          if (!sid || typeof sessions.get !== 'function') return null;
+          const sess = sessions.get(sid);
+          if (!sess || !sess.header) return null;
+          const norm = (p) => String(p || '').replace(/[\\/]+$/, '').replace(/\//g, '\\').toLowerCase();
+          if (norm(sess.header.cwd) !== norm(STATE_DIR)) return null;   // 只借"就是私人根"的那条会话
+          const pol = sp.resolve({ session: sess });
+          if (!pol || !['workspace-write', 'read-only'].includes(pol.mode)) return null;
+          return pol;
+        } catch (e) { return null }
+      };
+      let stateWriteTail = Promise.resolve();
+      let stateWriteGeneration = 0;
+      const saveState = async () => {
+        if (S.stateLoading || S.stateReadBlocked) return 'save-fail';
+        const payload = { schema: STATE_SCHEMA, sessionId: S.sessionId, mainSessionId: S.mainSessionId, auto: S.auto, autoTime: S.autoTime, lastCollectAt: S.lastCollectAt, seeded: S.seeded, seededFor: S.seededFor, items: S.items,
+          busy: S.busy, busySince: S.busySince, busyBase: S.busyBase, busyFor: S.busyFor || '', busySawOpen: !!S.busySawOpen, busyProbeFail: Number(S.busyProbeFail || 0), lastDoneAt: S.lastDoneAt, collectDay: S.collectDay, autoFiredDay: S.autoFiredDay,
+          // A107：今天跑了几轮（自动 + 补跑一起算，硬上限见 tick）、上一次被限流的时刻
+          roundsDay: String(S.roundsDay || ''), roundsToday: Number(S.roundsToday || 0),
+          lastRateLimitedAt: Number(S.lastRateLimitedAt || 0),
+          autoRetry: S.autoRetry !== false, retryCount: Number(S.retryCount || 0), lastRetryAt: Number(S.lastRetryAt || 0),
+          // A102：流式截断签名的现场（退避时刻、命中次数、最近几条原文、setRouteModel 的结果）
+          retryAt: Number(S.retryAt || 0), streamFlakyCount: Number(S.streamFlakyCount || 0),
+          lastStreamError: String(S.lastStreamError || ''), lastStreamErrorAt: Number(S.lastStreamErrorAt || 0),
+          streamErrors: Array.isArray(S.streamErrors) ? S.streamErrors.slice(-8) : [],
+          routeModelNote: String(S.routeModelNote || ''), routeModelAt: Number(S.routeModelAt || 0),
+          // A19：`note`（最近一次动作的人话）与 `autoFiredAt`（上次自动触发时刻）以前**没持久化** ⇒
+          //   重启后 note 退回默认值"骨架版：真实采集待接入"，看起来像"什么都没发生过"。
+          note: String(S.note || ''), autoFiredAt: Number(S.autoFiredAt || 0),
+          // A98：自动"为什么没跑/为什么没触发成"要跨重启活下来（含失败退避与失败原文）
+          autoWhy: String(S.autoWhy || ''), autoFireRetryAt: Number(S.autoFireRetryAt || 0), autoFireRetryTries: Number(S.autoFireRetryTries || 0),
+          autoFireDueKey: String(S.autoFireDueKey || ''), autoLastOkAt: Number(S.autoLastOkAt || 0),
+          lastTriggerError: String(S.lastTriggerError || ''), lastTriggerErrorAt: Number(S.lastTriggerErrorAt || 0),
+          ctxAuto: S.ctxAuto, ctxRatio: S.ctxRatio, ctxFallback: S.ctxFallback, ctxCooldownMs: S.ctxCooldownMs,
+          ctxTokens: S.ctxTokens, ctxWindow: S.ctxWindow, ctxLimit: S.ctxLimit, ctxPct: S.ctxPct,
+          ctxChecks: S.ctxChecks, ctxSkips: S.ctxSkips, ctxRotations: S.ctxRotations,
+          ctxLastRotateAt: S.ctxLastRotateAt, ctxLastRotateTurn: S.ctxLastRotateTurn,
+          // A23：轮换留痕 + 多出来的同标题主 agent（都要跨重启活下来，否则"上次为什么没归档"重启后就没了）
+          ctxLastRotateWhy: String(S.ctxLastRotateWhy || ''), ctxLastRotateOk: (S.ctxLastRotateOk === null || S.ctxLastRotateOk === undefined) ? null : !!S.ctxLastRotateOk,
+          ctxLastRotateArchived: String(S.ctxLastRotateArchived || ''), ctxLastRotateErr: String(S.ctxLastRotateErr || ''),
+          ctxLastRotateSteps: Array.isArray(S.ctxLastRotateSteps) ? S.ctxLastRotateSteps.slice(0, 24).map(String) : [],
+          extraMains: Array.isArray(S.extraMains) ? S.extraMains.slice(0, 30) : [], extraMainsAt: Number(S.extraMainsAt || 0),
+          // 双会话（2026-09-17）：**这几行少了，重启后槽就空 ⇒ 又重新 adopt/create 一个会话**（实测踩过）
+          sessThu: S.sessThu || '', sessParatera: S.sessParatera || '',
+          // A63：派发的正向断言要跨重启活下来（漏进白名单 = 重启后又把一轮发给老 cwd 的会话）
+          cwdTag: String(S.cwdTag || ''),
+          cwdMade: Array.isArray(S.cwdMade) ? S.cwdMade.slice(-12).map(String) : [],
+          routePick: S.routePick || '', inbox: INBOX_DIR, routes: ROUTES.map(function (r) { return { id: r.id, label: r.label, menuName: r.menuName || '', hint: r.hint || '', provider: r.provider || '', model: r.model || '', 'default': !!r['default'] } }),
+  routeAt: S.routeAt || 0, routeWhy: S.routeWhy || '',
+          ctxRatioThu: (S.ctxRatioThu === undefined ? 0.7 : S.ctxRatioThu),
+          slotsInitAt: S.slotsInitAt || 0, slotsInitVer: S.slotsInitVer || 0,
+          slotsInitSteps: Array.isArray(S.slotsInitSteps) ? S.slotsInitSteps.slice(0, 40) : [],
+          routeNeedsConfirm: !!S.routeNeedsConfirm, routeProbe: S.routeProbe || null,
+          gwPolicy: S.gwPolicy || 'skip', gwDownAt: S.gwDownAt || 0, gwDownReason: S.gwDownReason || '',
+          gwRunAt: S.gwRunAt || 0, gwRunMode: S.gwRunMode || '',
+          // A04（2026-09-20 审计 H06）：**"请求采集"与"采集完成"分开存**。
+          //   旧版在 sc.prompt 之后立刻写 lastCollectAt/collectDay ⇒ 只是"入队成功"就被记成
+          //   "采集到现在"，中断/取数失败/没交付都会留下**再也不会被覆盖的空洞**。
+          //   现在 pendingCollect 记"已请求但还没交付"，只有面板真被回写（取数+交付通过）才提交游标。
+          pendingCollect: S.pendingCollect || null,
+          // A21/A22：未交付轮的补跑计数 + 主 agent 未回答的提问（都要能跨重启活下来，
+          //   否则"昨晚它问了什么"重启后就查不到了）
+          resumeCount: Number(S.resumeCount || 0),
+          pendingAsk: S.pendingAsk
+            ? { callId: String(S.pendingAsk.callId || ''), at: Number(S.pendingAsk.at || 0),
+                stale: !!S.pendingAsk.stale,
+                questions: Array.isArray(S.pendingAsk.questions) ? S.pendingAsk.questions.slice(0, 4) : [] }
+            : null };
+        const text = JSON.stringify(payload, null, 2);
+        const generation = stateWriteGeneration;
+        const next = stateWriteTail.then(() => generation === stateWriteGeneration ? writeState(text) : 'save-fail');
+        stateWriteTail = next.catch(() => {});
+        return await next;
+      };
+      const writeState = async (text) => {
+        if (S.stateLoading || S.stateReadBlocked) return 'save-fail';
+        try {
           // A18：写前把**上一份有效内容**另存 `.bak`。fs 服务没有 rename/remove，
           //   所以这里只能"读+写"复制（**不搬移、不删除**）。只在上一份能解析时才覆盖 .bak ——
           //   否则会把好备份换成坏内容。
@@ -357,14 +396,33 @@ return {
             try { prev = await fsSvc.readText(await fsSvc.resolve(STATE_FILE)) } catch (e) { prev = '' }
             try { if (prev) JSON.parse(prev) } catch (e) { prev = '' }
           }
-          if (prev) {
-            try { await fsSvc.writeText(await fsSvc.resolve(STATE_FILE + '.bak'), prev) } catch (e) {}
+          // A112（2026-11-23 Codex 复审给出的正式接口）：把**插件自己那条会话的策略**显式传下去。
+          //   宿主插件不在任何会话里，省略策略就走部署默认（workspaceRoot=process.cwd()）⇒ 写私人根必被拒。
+          //   官方做法是 sandboxPolicy.resolve({ session }) —— session 必须是**已经加载的真实 Session**
+          //   （SessionStore.get(id)），并且它自己的 cwd 必须就是私人物理根才借；否则退回部署默认。
+          const pol = privatePolicy();
+          if (prev && prev !== text) {
+            await fsSvc.writeText(await fsSvc.resolve(STATE_FILE + '.bak'), prev, undefined, undefined, pol);
           }
-          await fsSvc.writeText(await fsSvc.resolve(STATE_FILE), text);
+          await fsSvc.writeText(await fsSvc.resolve(STATE_FILE), text, undefined, undefined, pol);
           lastSavedText = text;
           S.lastSaveOk = true; S.lastError = '';
+          S.saveBlocked = false; S.saveBlockedAt = 0; S.saveBlockedMsg = '';
           return 'saved';
-        } catch (e) { noteError('saveState', e); return 'save-fail' }
+        } catch (e) {
+          // A110（2026-11-21）：**落盘失败要当"不能用"处理，别当没发生**。
+          //   实测：宿主在 workspace-write 下写 <DSH_HOME>/dsh-chat-digest/state.json 被拒
+          //   （`file access denied under workspace-write mode`），而旧代码只是 noteError 一句就算完 ⇒
+          //   游标/busy/轮次记账全丢 ⇒ 重启后它认为"还欠一轮"，于是又拉一整轮（用户看到的"一直在跑"）。
+          //   现在：标记 saveBlocked，并在 tick 里**停掉自动与补跑**，同时把原因写进 note 让面板显示，
+          //   宁可不动，也不靠"猜状态"去触发轮次。
+          const msg = String((e && e.message) || e);
+          S.saveBlocked = true; S.saveBlockedAt = Date.now(); S.saveBlockedMsg = msg.slice(0, 200);
+          S.note = '状态无法落盘 ⇒ 已停自动采集、补跑与续跑';
+          // Queued snapshots may contain a cursor the failed caller is about to roll back.
+          stateWriteGeneration++;
+          noteError('saveState', e); return 'save-fail'
+        }
       };
       const loadState = async () => {
         // A18：先取原始文本，**把"不存在"与"损坏"分开**（旧版一个 try 包到底，
@@ -377,8 +435,17 @@ return {
         let olds = [];
         if (typeof STATE_OLD === 'string' && STATE_OLD) olds = [STATE_OLD];
         else if (typeof STATE_OLD !== 'undefined' && Array.isArray(STATE_OLD)) olds = STATE_OLD;
-        try { raw = await fsSvc.readText(await fsSvc.resolve(STATE_FILE)) } catch (e) { raw = '' }
-        if (!raw) {
+        let primaryExists = true;
+        try { raw = await fsSvc.readText(await fsSvc.resolve(STATE_FILE)) } catch (e) {
+          if (!e || !['FS_NOT_FOUND', 'ENOENT'].includes(e.code)) {
+            S.stateReadBlocked = true;
+            S.lastSaveOk = false;
+            S.lastError = 'loadState: 无法读取状态';
+            return 'read-fail';
+          }
+          primaryExists = false;
+        }
+        if (!primaryExists && !raw) {
           // 一次性迁移：新路径没有、某个旧位置有 ⇒ 读旧的，并在下面**立刻落盘到新路径**（旧文件不删）。
           for (const oldP of olds) {
             if (!oldP) continue;
@@ -388,9 +455,12 @@ return {
             } catch (e) {}
           }
         }
-        if (!raw) return 'none';                           // 确实没有：保持默认值（不是损坏）；返回 'none' 与旧行为一致（调用方只把它拼进诊断串）
+        if (!raw && !primaryExists) return 'none';
         let j = null;
-        try { j = JSON.parse(raw) } catch (e) {
+        try {
+          j = JSON.parse(raw);
+          if (!j || typeof j !== 'object' || Array.isArray(j)) throw new Error('Invalid state');
+        } catch (e) {
           // 损坏隔离（**不删任何文件**）：坏件另存为 .corrupt-<ts>，再尝试从 .bak 恢复。
           const ts = String(Date.now());
           try { await fsSvc.writeText(await fsSvc.resolve(STATE_FILE + '.corrupt-' + ts), raw) } catch (e2) {}
@@ -398,8 +468,13 @@ return {
           try { bak = await fsSvc.readText(await fsSvc.resolve(STATE_FILE + '.bak')) } catch (e2) {}
           let jb = null;
           try { jb = bak ? JSON.parse(bak) : null } catch (e2) { jb = null }
-          if (jb) { j = jb; S.note = 'state.json 解析失败，已从 .bak 恢复（坏件另存 state.json.corrupt-' + ts + '）' }
-          else { S.note = 'state.json 解析失败且 .bak 也不可用（坏件另存 state.json.corrupt-' + ts + '），本轮按默认值启动'; S.lastError = 'loadState: corrupt state.json'; return 'none' }
+          if (jb && typeof jb === 'object' && !Array.isArray(jb)) { j = jb; S.note = 'state.json 解析失败，已从 .bak 恢复（坏件另存 state.json.corrupt-' + ts + '）' }
+          else {
+            S.stateReadBlocked = true; S.lastSaveOk = false;
+            S.note = '状态文件和备份无法恢复，已停采集；请检查私有状态文件';
+            S.lastError = 'loadState: corrupt state.json';
+            return 'read-fail';
+          }
         }
         // 兜底迁移（2026-09-25 实测）：新位置**已经有文件**、但那份**从没采集过**
         //   （既无 collectDay 也无 lastCollectAt），而某个旧位置有采集记录 ⇒ 以旧的为准。
@@ -427,13 +502,15 @@ return {
           if (j && typeof j.auto === 'boolean') S.auto = j.auto;
           if (j && typeof j.autoTime === 'string') S.autoTime = j.autoTime;
           if (j && j.lastCollectAt) S.lastCollectAt = Number(j.lastCollectAt) || 0;
-          // 采集轮状态（重启后：busy 一并恢复，但下一次 tick 会用 inspect 复核，不会永远卡住）
+          // 采集轮状态（重启后：busy 一并恢复，但下一次 tick 会用 inspect 复核；复核失败的复位见 checkBusy 顶部）
           if (j && typeof j.busy === 'boolean') S.busy = j.busy;
           if (j && j.busySince) S.busySince = Number(j.busySince) || 0;
           if (j && j.busyBase !== undefined) S.busyBase = (j.busyBase === null ? null : Number(j.busyBase));
           // 2026-09-17 晚加：busy 收尾要认"这一轮发进了哪个会话"（中途换会话也能收尾，见 checkBusy）
           if (j && typeof j.busyFor === 'string') S.busyFor = j.busyFor;
           if (j && typeof j.busySawOpen === 'boolean') S.busySawOpen = j.busySawOpen;
+          // A103（2026-11-01）：inspect 连续失败计数也落盘 —— 否则每重启一次就从 0 开始，永远攒不满阈值
+          if (j && Number.isFinite(Number(j.busyProbeFail))) S.busyProbeFail = Number(j.busyProbeFail) || 0;
           // 异常退出自动续跑（2026-09-17 晚）：开关与计数也要持久化，否则重启就丢
           if (j && typeof j.autoRetry === 'boolean') S.autoRetry = j.autoRetry;
           if (j && Number.isFinite(Number(j.retryCount))) S.retryCount = Number(j.retryCount);
@@ -453,6 +530,10 @@ return {
           if (j && typeof j.collectDay === 'string') S.collectDay = j.collectDay;
           else S.collectDay = new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
           if (j && typeof j.autoFiredDay === 'string') S.autoFiredDay = j.autoFiredDay;
+          // A107：当日轮次计数与限流时刻也要跨重启（否则重启就能绕过"今天最多 3 轮"）
+          if (j && typeof j.roundsDay === 'string') S.roundsDay = j.roundsDay;
+          if (j && Number.isFinite(Number(j.roundsToday))) S.roundsToday = Number(j.roundsToday) || 0;
+          if (j && Number.isFinite(Number(j.lastRateLimitedAt))) S.lastRateLimitedAt = Number(j.lastRateLimitedAt) || 0;
           // A19：`note` 与 `autoFiredAt` 以前不落盘 ⇒ 重启后看不出"上一轮到底做了什么"
           if (j && typeof j.note === 'string') S.note = j.note;
           if (j && Number.isFinite(Number(j.autoFiredAt))) S.autoFiredAt = Number(j.autoFiredAt);
@@ -491,7 +572,8 @@ return {
           if (j && j.pendingCollect && typeof j.pendingCollect === 'object' && j.pendingCollect.day) {
             S.pendingCollect = { day: String(j.pendingCollect.day), at: Number(j.pendingCollect.at) || 0,
                                  sessionId: String(j.pendingCollect.sessionId || ''), reason: String(j.pendingCollect.reason || ''),
-                                 mode: String(j.pendingCollect.mode || '') };
+                                 mode: String(j.pendingCollect.mode || ''),
+                                 resumes: Number(j.pendingCollect.resumes) || 0 };
           }
           // A21/A22：补跑计数与"未回答的提问"也要跨重启（否则昨晚它问了什么，重启后就查不到）
           if (j && Number.isFinite(Number(j.resumeCount))) S.resumeCount = Number(j.resumeCount);
@@ -532,7 +614,8 @@ return {
           }
           // A18：迁移过来就**立刻写到新路径**，别只读不写（否则每次启动都要再读一次旧文件）。
           // `typeof` 兜底：审计探针单独 exec 这段时作用域里没有 saveState。
-          if (migrated && typeof saveState === 'function') { try { await saveState() } catch (e) {} }
+          if (migrated && S.stateLoading) S.stateNeedsMigration = true;
+          else if (migrated && typeof saveState === 'function') { try { await saveState() } catch (e) {} }
           return S.sessionId ? 'restored' : 'empty';
         } catch (e) { return 'none' }
       };
@@ -1262,9 +1345,16 @@ const AGENT_PRESET = (typeof CF.agentPreset === 'string') ? CF.agentPreset : '';
       const spawnOpen = async (abs) => {
         const sp = ctx.get('subprocess');
         if (!sp || typeof sp.spawn !== 'function') return { ok: false, error: '宿主没有 subprocess 服务，无法用默认应用打开' };
-        let exe = 'C:\\Windows\\System32\\cmd.exe';
-        try { const r = await sp.resolveExecutable('cmd.exe'); if (r) exe = r } catch (e) {}
-        const cwd = String(abs).replace(/[\\/][^\\/]*$/, '') || 'C:\\';
+        // A40（2026-11-05）：解释器与工作目录**不写死本机常量** —— 换机器/换系统盘也能用。
+        //   顺序：宿主给的 resolveExecutable → 环境里的 ComSpec → 明确失败（不猜路径）。
+        let exe = '';
+        try { if (typeof sp.resolveExecutable === 'function') { const r = await sp.resolveExecutable('cmd.exe'); if (typeof r === 'string' && r.trim()) exe = r } } catch (e) {}
+        if (!exe) exe = String((ENV && ENV.ComSpec) || '');
+        if (!exe) return { ok: false, error: '找不到 cmd.exe：宿主没有提供 resolveExecutable，环境里也没有 ComSpec' };
+        // cwd＝文件所在目录；取不到就用系统盘根（SystemDrive），而不是写死某个盘符根目录
+        const sysDrive = String((ENV && ENV.SystemDrive) || 'C:');
+        const cwdBase = String(abs).replace(/[\\/][^\\/]*$/, '');
+        const cwd = /^[A-Za-z]:$/.test(cwdBase) ? cwdBase + '\\' : cwdBase || (sysDrive.replace(/[\\/]+$/, '') + '\\');
         try {
           const h = sp.spawn({ argv: [exe, '/c', 'start', '', String(abs)], cwd: cwd,
                                stdio: { stdin: 'ignore', stdout: 'ignore', stderr: 'ignore' }, graceMs: 3000 });
@@ -1395,7 +1485,7 @@ const roundPromptLive = async (date, reason, since, mode) => {
               // **最后一个回合是怎么结束的**：'completed' 正常 ｜ 'error' 异常（实测 "Stream ended without
               //   finish_reason" ⇒ {kind:'error',error:{code:'TRANSPORT'}}）｜ 'aborted' 被停 ｜ 'interrupted' 被打断
               lastReason = (e.data.reason && e.data.reason.kind) ? String(e.data.reason.kind) : '';
-              // A102：**把错误原文也带出来**（只在 `reason.error.message` 里）。madmodel 的流式缺陷
+              // A102：**把错误原文也带出来**（只在 `reason.error.message` 里）。用户 的流式缺陷
               //   （`Unterminated string in JSON` / `Unexpected end of JSON input`）就靠这一行认签名；
               //   完成的回合会把 `reason.error` 置空 ⇒ 这里自然清掉，不会把旧错误当成这一轮的。
               lastErrorMsg = (e.data.reason && e.data.reason.error && e.data.reason.error.message)
@@ -1585,11 +1675,14 @@ const roundPromptLive = async (date, reason, since, mode) => {
         return made;
       };
       const pickRoute = async (route, why) => {
+        // A109（2026-11-21）：**单槽位**。线路只当"这条会话该用哪个模型"的标签：
+        //   · 永远只用第 1 个槽的会话（不新建第二个）；
+        //   · 想要另一条线路 ⇒ 在这条会话上 selectModel 换模型（high 强度），不换会话。
         const r = (String(route) === String(R1)) ? R1 : R0;
         const steps = [];
         if (S.busy) return { ok: false, error: '上一轮还在跑（不切会话）', busy: true, steps };
-        const id = await ensureRouteSession(r, steps);
-        if (!id) return { ok: false, error: '拿不到 ' + r + ' 的会话', steps };
+        const id = await ensureRouteSession(R0, steps);
+        if (!id) return { ok: false, error: '拿不到常驻会话', steps };
         // A63（2026-09-27 事故）：**派发前的正向断言** —— 这条会话必须是本插件在当前 AGENT_CWD
         //   下亲手建过的。不满足（＝老 cwd 的会话，或元数据读不到）就**当场另建一条**再发，
         //   绝不把一轮发给一条写不出产物的会话（那次它把探针文件写进了包里、产物一个字没出）。
@@ -1616,6 +1709,15 @@ const roundPromptLive = async (date, reason, since, mode) => {
           // 换了会话 ⇒ 上下文用量那几个数**必须清零**，否则 /state 会拿**上一个会话**的用量冒充当前会话
           //（2026-09-17 踩过：切到 线路1 会话后仍显示老会话的 ctxWindow=1000000 / ctxLimit=900000）
           S.ctxTokens = 0; S.ctxWindow = 0; S.ctxLimit = 0; S.ctxPct = 0;
+        }
+        // A109：**切线路＝在这条会话上换模型**（同一个会话，不另建）。只有真的换了目标时才调 selectModel。
+        if (String(S.routeModelPick || '') !== String(r)) {
+          const scM = ctx.get('sessionController');
+          if (scM) {
+            const sm = await noteRouteModel(scM, id, r);
+            steps.push('model:' + (sm && sm.ok ? String(sm.selected.provider) + '/' + String(sm.selected.model) : 'err'));
+            S.routeModelPick = r;
+          }
         }
         steps.push('active:' + id.slice(0, 12) + (changed ? '(changed)' : '(same)'));
         await saveState();
@@ -1670,10 +1772,12 @@ const roundPromptLive = async (date, reason, since, mode) => {
       //   不阻塞任何路由：第一次被问 `/state` 时后台起一次（UI 每 10 秒轮询 ⇒ 重启后约 10 秒内两个会话就位）。
       const ensureBothSlots = async () => {
         if (S.slotsInitBusy) return;
-        // **带版本号**：改过槽逻辑就 +1 ⇒ 下次载入会**再跑一次**初始化（否则 `slotsInitAt` 已存在，新的自愈逻辑永远轮不到）
-        const SLOTS_VER = 4;
+        // A109（2026-11-21 用户明确要求）：**只有一条常驻会话（单槽位）**。
+        //   "切模型"＝在**同一条会话**上 selectModel，不再为每条线路各建一个会话。
+        //   旧的双槽设计会并行拉起两条会话、各占一条线路的额度，用户看到的是"占一个 thu 槽位"。
+        //   函数名和 state 里的 sessThu/sessParatera 字段保留（schema 不动），但只维护第 1 个。
+        const SLOTS_VER = 5;                                  // +1 ⇒ 载入后重跑一次，把旧的双槽收敛成单槽
         if (S.slotsInitAt && Number(S.slotsInitVer || 1) >= SLOTS_VER) return;
-        // A29：**控制器没就绪就不跑**（那一刻判活全会失败）。退避重试，最多 10 次；期间**不写任何状态**。
         {
           const sc0 = ctx.get('sessionController'), wc0 = ctx.get('workspaceController');
           if (!sc0 || !wc0) {
@@ -1687,18 +1791,26 @@ const roundPromptLive = async (date, reason, since, mode) => {
         S.slotsInitBusy = true;
         const steps = [];
         try {
-          await ensureSession(false);                       // 先用既有的认领/采纳逻辑确立"当前主会话"
-          // **不做自动认领老会话**（2026-09-17 用户选定）：paratera 槽就用它自己那个会话（首次初始化新建的那个，干净、1M 全空）。
-          //   那个攒了很久上下文的老会话**留在侧栏不动**（用户可自行归档）—— 想手工挂载就用 `POST /chat-feed/api/route-adopt`。
-          await ensureRouteSession(R1, steps);      // 槽空/失效才新建；已有活着的就复用
-          await ensureRouteSession(R0, steps);           // 线路1 槽：新建一个独立会话（新会话 ⇒ 200k 放得下）
+          await ensureSession(false);                       // 既有的认领/采纳逻辑确立"当前主会话"
+          await ensureRouteSession(R0, steps);               // 唯一一条：槽空/失效才新建
+          S.sessParatera = '';                               // 第二个槽位不再存在
           S.slotsInitAt = Date.now(); S.slotsInitSteps = steps; S.slotsInitVer = SLOTS_VER;
           if (!S.routePick) S.routePick = R0;
-          // 备好之后**把活跃会话对齐到选中的线路**（否则 /state 会出现"routePick=thu 而 sessId 还是 paratera 那个会话"的矛盾）
           const pk = await pickRoute(S.routePick, 'slots-init');
           if (pk && pk.ok) steps.push('active-aligned:' + String(pk.route));
-          await saveState();
-          console.log('[cf] 双会话就位：%s', steps.join(' / '));
+          // A111（2026-11-23）：启动时**用一次真实写入**判定这台机器能不能落盘。
+          //   不用"上次进程留下的标志位"——进程内 flag 遮不住重启缺口：真写不进去时，
+          //   每次启动都会在这条真实写入上重新失败，于是 auto/补跑/续跑一律不开。
+          const pr0 = await saveState();
+          if (pr0 !== 'saved') {
+            S.saveBlocked = true; S.saveBlockedAt = Date.now();
+            if (!S.saveBlockedMsg) S.saveBlockedMsg = 'state.json 写入被拒（见 lastError）';
+            steps.push('persist:blocked');
+          } else {
+            S.saveBlocked = false; S.saveBlockedAt = 0; S.saveBlockedMsg = '';
+            steps.push('persist:ok');
+          }
+          console.log('[cf] 单会话就位：%s', steps.join(' / '));
         } catch (e) { noteError('slots-init', e) } finally { S.slotsInitBusy = false }
       };
 
@@ -1710,6 +1822,10 @@ const roundPromptLive = async (date, reason, since, mode) => {
       const triggerRound = async (reason, opts) => {
         const sc0 = ctx.get('sessionController');
         if (!sc0) return { ok: false, error: '没有 sessionController' };
+        if (S.stateLoading || S.stateReadBlocked) return { ok: false, error: '状态尚不可用，已停采集' };
+        if (S.saveBlocked && (reason === 'auto' || reason === 'resume')) {
+          return { ok: false, error: '状态无法落盘，已停自动采集' };
+        }
         if (S.busy) return { ok: false, error: '上一轮还在跑', busy: true, note: S.note };
         if (S.triggering) return { ok: false, error: '另一轮触发正在进行中（入口互斥锁已占用）', busy: true, note: S.note };
         S.triggering = { at: Date.now(), reason: String(reason || '') };
@@ -1778,13 +1894,28 @@ const roundPromptLive = async (date, reason, since, mode) => {
       // 真正把提示词发出去（两条路径共用）
       const fireRound = async (sc, reason, pick, mode, probeRes) => {
         const date = cstDay();
+        // A105（2026-11-16）：补跑要沿用**原来那一轮**的起点，不能用自己的发车时刻。
+        //   否则游标会从 23:30:02 跳成 23:40:32 —— 中间 10 分钟没被任何一轮覆盖（A04 想防的正是这种空洞）。
+        const isResume = String(reason || '') === 'resume';
+        const prev = (S.pendingCollect && String(S.pendingCollect.day || '') === date) ? S.pendingCollect : null;
+        const prevAt = prev ? (Number(prev.at) || 0) : 0;
+        const prevResumes = prev ? (Number(prev.resumes) || 0) : 0;
         const base = await turnEnds(sc);                 // 触发前的 turn/end 计数 = 基线
         try {
           // A68：提示词**在发车这一刻从磁盘读**（包内 + 私人补充），读不到才退回挂载时那份 ⇒
           //   以后改提示词不用再重启宿主（今天为「改提示词」重启了 5 次，每次都要用户动手）。
-          const promptText = await roundPromptLive(date, reason, S.lastCollectAt || 0, mode);
-          await sc.prompt({ requestId: 'collect-' + Date.now(), sessionId: S.sessionId, mode: 'queue',
+          // A105：**补跑不再重发整份模板**。同一会话里上一轮的内容还在上下文里，再灌一遍 1073 行
+          //   只会让用户看到"一天两次同样的提示词"，还白烧一次输入。补跑只发一句"接着收尾"。
+          const promptText = isResume
+            ? ('【补跑】' + date + ' 这一轮已经跑过一次，但条目没有回写进面板（采集基准因此没前移）。'
+               + '请接着把它收尾：用 POST /chat-feed/api/items-patch 把本轮条目写回'
+               + '（确实没有新条目就明确回报「无新增」），然后简短回报你改了什么。'
+               + '不要再从头重读一遍聊天记录。')
+            : await roundPromptLive(date, reason, S.lastCollectAt || 0, mode);
+          if (await saveState() !== 'saved') return { ok: false, error: '状态无法落盘，未派发采集' };
+          const receipt = await sc.prompt({ requestId: 'collect-' + Date.now(), sessionId: S.sessionId, mode: 'queue',
                             content: [{ type: 'text', text: promptText }] }, FAKE_SIGNAL);
+          if (receipt && receipt.accepted === false) throw new Error('DSH 未接受采集请求');
         } catch (e) {
           // A98（2026-10-01）：这是 09-29 那次"打空"的嫌疑点（提示词入队失败）——
           //   原文必须落盘（`noteError` 只进内存，宿主一重启就没了）。
@@ -1794,6 +1925,12 @@ const roundPromptLive = async (date, reason, since, mode) => {
           return { ok: false, error: String((e && e.message) || e) };
         }
         S.busy = true; S.busySince = Date.now(); S.busyBase = base;
+        // A107：记当日轮次（自动与补跑都算），给 tick 的"今天最多 3 轮"用
+        {
+          const today0 = cstDay();
+          if (String(S.roundsDay || '') !== today0) { S.roundsDay = today0; S.roundsToday = 0 }
+          S.roundsToday = Number(S.roundsToday || 0) + 1;
+        }
         // **记下这一轮到底发进了哪个会话**（2026-09-17 晚加）：这一轮跑起来之后 `S.sessionId` 有可能被
         //   `ensureSession` 换掉（那次"两个主 agent"事故就是这么发生的），而 checkBusy 原来只看 S.sessionId
         //   ⇒ 换了会话就永远收不了尾（busy 卡到 3 小时超时，面板一直"采集中…"、获取被"上一轮还在跑"挡住）。
@@ -1804,12 +1941,15 @@ const roundPromptLive = async (date, reason, since, mode) => {
         //   "提示词入队成功"，取数还没跑、面板还没被回写。中断/取数失败/没交付都会留下
         //   一个**再也不会被覆盖的空洞**（下一轮从"入队时刻"开始取数）。
         //   现在只记"已请求、未交付"；游标由 `commitCursor()` 在**面板真被回写**时提交。
-        S.pendingCollect = { day: date, at: Date.now(), sessionId: String(S.sessionId || ''),
-                             reason: String(reason || ''), mode: String(mode || '') };
+        S.pendingCollect = { day: date, at: (isResume && prevAt) ? prevAt : Date.now(),
+                             sessionId: String(S.sessionId || ''),
+                             reason: String(reason || ''), mode: String(mode || ''),
+                             resumes: isResume ? (prevResumes + 1) : 0 };
         // A22：新一轮开始 ⇒ 上一轮那个没人回答的提问作废（它属于上一轮，不该继续在面板上挂着）
         S.pendingAsk = null;
         S.gwRunAt = Date.now(); S.gwRunMode = mode;
-        S.note = '已触发 ' + date + ' 一轮（' + (reason === 'auto' ? '自动' : '手动') + '，' + S.routePick + '，mode=' + mode
+        S.note = (isResume ? '补跑 ' : '已触发 ') + date + ' 一轮（'
+               + (reason === 'auto' ? '自动' : (isResume ? '补跑' : '手动')) + '，' + S.routePick + '，mode=' + mode
                + '）；**采集游标等交付成功才前移**';
         await saveState();
         return { ok: true, date, reason, route: S.routePick, mode: mode, sessionId: S.sessionId,
@@ -1904,12 +2044,42 @@ const roundPromptLive = async (date, reason, since, mode) => {
       // （不用 ctx.on('api-session/status')：动态插件的 ctx.on 订阅不到宿主事件——历史实测，见 DEV_NOTES）
       const checkBusy = async () => {
         if (!S.busy) return;
+        // A103（2026-11-01）：**复位判据必须排在所有提前返回之前**。
+        //   旧版把"超过 3 小时复位"写在下面 `done` 的 else-if 里，而"拿不到 sessionController"、
+        //   "sid 为空"、`st === null`（`sc.inspect` 抛错就返回 null，见 turnState 的 catch）
+        //   这三处都直接 return ⇒ 只要 inspect 一直失败，兜底永远走不到，busy 会永久为真：
+        //   面板一直"采集中…"、获取被"上一轮还在跑"挡住、state.json 也不再写。
+        //   2026-10-29 23:30 起的那次就是这样挂了两天（busySince 越过 3 小时好几倍也没复位）。
+        const busyAge = Date.now() - (Number(S.busySince) || 0);
+        if (S.busySince && busyAge > 3 * 3600 * 1000) {
+          S.busy = false; S.busyBase = null; S.busyFor = ''; S.busySawOpen = false; S.busyProbeFail = 0;
+          S.note = '上一轮状态超时（>3h）已复位（' + cstHM() + '）';
+          await saveState();
+          return;
+        }
         const sc = ctx.get('sessionController'); if (!sc) return;
         // 认"这一轮真正发进去的那个会话"（`busyFor`），没有才退回 `S.sessionId`（老状态）
         const sid = String(S.busyFor || S.sessionId || '');
         if (!sid) return;
         const st = await turnState(sc, sid);
-        if (st === null) return;
+        if (st === null) {
+          // A103：读不出状态（会话被删、文件读坏、控制器里没有这条）≠ 还在跑。
+          //   连续 6 次（tick 30 秒一次 ⇒ 约 3 分钟）就复位，不把"读不到"当成"在干活"。
+          S.busyProbeFail = (Number(S.busyProbeFail) || 0) + 1;
+          if (S.busyProbeFail >= 6) {
+            const nFail = S.busyProbeFail;
+            S.busy = false; S.busyBase = null; S.busyFor = ''; S.busySawOpen = false; S.busyProbeFail = 0;
+            // A106（2026-11-21）：读不出状态时**连这一轮的补跑一起放弃**。
+            //   否则 busy 一复位、10 分钟后补跑又发一整轮 ⇒ 再读不出来 ⇒ 再补……
+            //   2026-11-20 一天跑了 5 轮、11 个回合、6 个回合报错，就是这么滚起来的。
+            //   代价只是这一段窗口不前进（下一轮从旧游标重读），比整夜跑循环小得多。
+            if (S.pendingCollect) { S.pendingCollect = null; S.resumeCount = 0 }
+            S.note = '上一轮的状态连续 ' + nFail + ' 次读不出来（inspect 失败），已复位并放弃补跑（' + cstHM() + '）';
+            await saveState();
+          }
+          return;
+        }
+        S.busyProbeFail = 0;
         // A22：**主 agent 在等你回答**（有未回答的 `ask_user_question`）⇒ 记进 `S.pendingAsk`，
         //   由 `/state` 与面板显示。没有这一条，用户在自动轮里**完全不知道它在等**（2026-09-21 的实况）。
         //   解析器就地写（探针只 exec 本函数的切片，外面的名字在它作用域里不存在）。
@@ -1943,7 +2113,9 @@ const roundPromptLive = async (date, reason, since, mode) => {
           //   自动说「继续」等于跟他对着干。
           //   **只对"我们自己触发的那一轮"续跑**（`S.busyFor` 非空）：否则会把一条被停掉的旁支会话又"续"活。
           const abn = (st.lastReason === 'error') ? st.lastReason : '';
-          // A102（2026-10-01，另一会话在 madmodel 侧定案）：**这个签名是可重试的** ——
+          // A111（2026-11-23）：**"继续"也是派发**，同样必须先过持久化这道门。
+          //   写不进 state 时注入「继续」只会让下一轮同样白跑，还把槽位继续占住。
+          // A102（2026-10-01，另一会话在 用户 侧定案）：**这个签名是可重试的** ——
           //   服务端流式返回**较长的工具调用参数**时，会把一个事件的 JSON 劈成两帧（后一帧还换个新 id、
           //   裸正文没有 JSON 外壳），客户端于是报 `Unterminated string in JSON` /
           //   `Unexpected end of JSON input`。现场（本会话 2026-10-01，本地时间）：17:13:30–17:32:54
@@ -1955,6 +2127,18 @@ const roundPromptLive = async (date, reason, since, mode) => {
           //               paratera 的钱）；也不靠"缩输出"规避（触发条件与输出长度无关）
           const errMsg = String(st.lastErrorMsg || '');
           const flaky = /Unterminated string in JSON|Unexpected end of JSON input/i.test(errMsg);
+          // A107（2026-11-21 用户："随时都在运行，占一个槽位，有毛病吧"）：**限流不重试**。
+          //   429 / rate_limit 说明这一侧已经排满了，再注入「继续」只会更堵、还继续占着线路槽。
+          //   实测 2026-11-20：11 个回合里 6 个是错误回合，一大半是这类连续重试。
+          const rateLimited = /rate_limit|429|同时进行中的请求过多|Too Many Requests/i.test(errMsg);
+          if (rateLimited) {
+            S.lastRateLimitedAt = Date.now();
+            S.lastRateLimitMsg = errMsg.slice(0, 200);
+            S.retryCount = 0;
+            S.note = '上一轮被限流（' + cstHM() + '）⇒ 不再自动重试，等下一轮或你手动点「获取」';
+            await saveState();
+            return;
+          }
           if (flaky) {
             S.streamFlakyCount = (Number(S.streamFlakyCount) || 0) + 1;
             S.lastStreamError = errMsg.slice(0, 400);
@@ -1963,7 +2147,7 @@ const roundPromptLive = async (date, reason, since, mode) => {
               at: Date.now(), ends: Number(st.ends) || 0, route: String(routeOfActive() || ''), msg: errMsg.slice(0, 200),
             }]).slice(-8);
           }
-          if (abn && S.autoRetry !== false && roundSid) {
+          if (abn && S.autoRetry !== false && roundSid && !S.saveBlocked) {
             const cap = flaky ? 5 : 3;
             const tries = Number(S.retryCount || 0) + 1;
             // 退避窗口：只对"异常签名"等；普通错误立刻续跑（保持原行为）
@@ -1979,8 +2163,10 @@ const roundPromptLive = async (date, reason, since, mode) => {
               S.retryAt = flaky ? (Date.now() + 60 * 1000) : 0;
               try {
                 const base2 = await turnEnds(sc, sid);
-                await sc.prompt({ requestId: 'retry-' + Date.now(), sessionId: sid, mode: 'queue',
+                if (await saveState() !== 'saved') return;
+                const receipt = await sc.prompt({ requestId: 'retry-' + Date.now(), sessionId: sid, mode: 'queue',
                                   content: [{ type: 'text', text: flaky ? '继续（上一回合是流式截断，直接重试即可）' : '继续' }] }, FAKE_SIGNAL);
+                if (receipt && receipt.accepted === false) throw new Error('DSH 未接受续跑请求');
                 S.busy = true; S.busySince = Date.now(); S.busyBase = base2;
                 S.busyFor = sid; S.busySawOpen = false;
                 S.note = '上一轮异常结束（' + abn + (flaky ? '／流式截断签名' : '') + '）⇒ 已自动续跑（第 '
@@ -2002,15 +2188,21 @@ const roundPromptLive = async (date, reason, since, mode) => {
           }
           S.note = '上一轮已结束（' + cstHM() + '）' + (st.lastReason ? '［' + st.lastReason + '］' : '')
                  + (S.pendingAsk ? '，且**有一个提问没被回答**' : '');
+          // 正常回合结束只证明会话停止。没有落盘的交付时保留旧游标，
+          // 清掉本次自动补跑资格；下一次正常采集仍覆盖这段时间。
+          if (st.lastReason === 'completed' && S.pendingCollect && S.pendingCollect.day) {
+            S.pendingCollect = null;
+            S.resumeCount = 0;
+            S.note = '上一轮会话已结束，面板未确认交付；采集基准保留，等待下一次采集';
+          }
           if (S.pendingAsk) S.pendingAsk.stale = true;     // 回合已结束 ⇒ 这个提问已经作废，但**留着给人看**
           await saveState();
           S.retryCount = 0;                       // 正常跑完 ⇒ 续跑计数归零（下一轮从 0 开始）
           // 回合刚结束 = 自动刷新的最佳时机（此刻没有在跑的活，不会打断）
           checkCtx('turn-end').catch((e) => noteError('ctx-check', e));
-        } else if (S.busySince && Date.now() - S.busySince > 3 * 3600 * 1000) {
-          S.busy = false; S.busyBase = null; S.busyFor = ''; S.busySawOpen = false;
-          S.note = '上一轮状态超时（>3h）已复位'; await saveState();
         }
+        // 超时兜底已上移到 checkBusy 顶部（A103）：它必须对"读不出状态"那类提前返回也生效，
+        // 留在这里只覆盖 `done === false` 这一种情况，正是上次挂两天的原因。
       };
 
       // 自动：每 30 秒看一眼 CST 时间，判据只有一条（A99，实现见下面的 `dueKey`）：
@@ -2018,9 +2210,10 @@ const roundPromptLive = async (date, reason, since, mode) => {
       //   ⇒ 到点就跑；当时宿主不在、页面没开也会在之后的 tick 上补上（不再有"一天只跑一次"的限制，
       //     `autoFiredDay` 仅作展示）。
       try {
-        const offTick = timerSvc.interval(() => {
+        const offTick = timerSvc.interval(async () => {
           try {
-            checkBusy();
+            if (S.stateLoading || S.stateReadBlocked) { S.autoWhy = '状态尚不可用 ⇒ 已停采集'; return; }
+            await checkBusy();
             // 空闲时也看一眼上下文（慢路径：能兜住"重启前就已经很满"的会话；
             // 真正干活时 busy/open-turn 两道刹车会拦住，不会打断）
             if (!S.busy) checkCtx('idle-tick').catch((e) => noteError('ctx-check', e));
@@ -2034,22 +2227,56 @@ const roundPromptLive = async (date, reason, since, mode) => {
             // A21（2026-09-22 用户问"为什么昨天还是没有自动获取"）：**上一轮"请求过但没交付" ⇒ 补跑**。
             //   2026-09-21 23:30 那轮死在"提问没人回答"上（见 A22）：`pendingCollect` 一直挂着、游标不前移
             //   （A04 的设计是对的），但**没有任何东西会把它接上** ⇒ 整晚白跑、第二天什么都没有。
-            //   条件：距请求 ≥10 分钟、3 天以内、最多 3 次（`resumeCount`，**交付成功才归零**）。
+            //   条件：距请求 ≥10 分钟、3 天以内、同一轮最多补 1 次（`resumes`，**新的一轮才归零**）。
             //   注意它**不看 `S.auto`** —— 这是"把已经请求过的那一轮做完"，不是"新起一轮"。
+            // A105（2026-11-16 用户报「一天发两次同样的提示词」）：原来的判据只看 `S.busy`，而 busy 是
+            //   轮询推出来的，读不到/读到旧快照就会提前变 false。实测 2026-11-15：第一轮 23:30:02 发车、
+            //   那个回合到 23:45:04 才结束，可 23:40:32 补跑就发出去了 ⇒ 提示词排队，回合一结束立刻又跑
+            //   一遍同样的东西。所以补跑前**独立再问一次会话**：有未结束的回合就等它收尾，绝不补。
+            // A111（2026-11-23 Codex 复审）：这道门必须**排在补跑之前**。
+            //   旧顺序是先判 pendingCollect 再判 saveBlocked ⇒ 写被拒的那一刻，已经挂着的 pending
+            //   照样会被补跑发出去（等于"明知道状态写不进去，还把一整轮排上去"）。
+            //   现在：状态落不了盘就什么都不启动 —— 自动、补跑、续跑一视同仁。
+            if (S.saveBlocked) { S.autoWhy = '状态无法落盘 ⇒ 已停自动与补跑（修好写权限后重启）'; return; }
             if (!S.busy && S.pendingCollect && S.pendingCollect.day) {
               const ageMs = Date.now() - (Number(S.pendingCollect.at) || 0);
-              const tries = Number(S.resumeCount || 0);
-              if (ageMs > 10 * 60 * 1000 && ageMs < 3 * 24 * 3600 * 1000 && tries < 3) {
-                S.resumeCount = tries + 1;
+              const tries = Number(S.pendingCollect.resumes || 0);
+              if (ageMs > 10 * 60 * 1000 && ageMs < 3 * 24 * 3600 * 1000 && tries < 1) {
+                const scR = ctx.get('sessionController');
+                const sidR = String(S.pendingCollect.sessionId || S.sessionId || '');
+                // 读不到会话就**不补跑**（宁可晚一轮，也不要凭空多发一份提示词）
+                if (!scR || !sidR) { S.autoWhy = '读不到会话控制器 ⇒ 先不补跑'; return; }
+                const stR = await turnState(scR, sidR);
+                if (!stR || stR.open) { S.autoWhy = '无法确认上一轮已经结束 ⇒ 不补跑'; return; }
+                S.resumeCount = Number(S.resumeCount || 0) + 1;
                 S.autoWhy = '补跑未交付的 ' + S.pendingCollect.day + ' 一轮（第 ' + S.resumeCount + ' 次）';
                 S.note = S.autoWhy;
-                saveState();
+                if (await saveState() !== 'saved') return;
                 triggerRound('resume').catch((e) => noteError('resume-trigger', e));
                 return;
               }
             }
             if (!S.auto) { S.autoWhy = '自动未开启'; return; }
             if (S.busy) { S.autoWhy = '上一轮还在跑（busy）'; return; }
+            // A108：**刚启动的 15 分钟内不补欠账**。宿主崩溃重启、或你手动重启，都不该立刻拉一整轮
+            //   （2026-11-21 20:55:48 启动，20:56:40 就发车了，用户的原话是"闪退刚启动它就启动了"）。
+            //   已经过了 autoTime 的当天正常轮不受影响 —— 宽限期一过照跑。
+            if (S.mountedAt && Date.now() - S.mountedAt < 15 * 60 * 1000) {
+              S.autoWhy = '刚启动，等 ' + Math.max(1, Math.ceil((15 * 60 * 1000 - (Date.now() - S.mountedAt)) / 60000)) + ' 分钟再说（不补欠账）';
+              return;
+            }
+            // A107（2026-11-21）：**同一天最多跑 3 轮**（自动 + 补跑一起算）。硬上限，不解释。
+            //   2026-11-20 那天跑了 5 轮、11 个回合，用户的原话是"随时都在运行，占一个 thu 槽位"。
+            {
+              const d0 = cstDay();
+              const n0 = (String(S.roundsDay || '') === d0) ? Number(S.roundsToday || 0) : 0;
+              if (n0 >= 3) { S.autoWhy = '今天已跑 ' + n0 + ' 轮（上限 3）⇒ 不再触发'; return; }
+            }
+            // 限流后 30 分钟内不自动起新一轮（起来也是白撞）
+            if (S.lastRateLimitedAt && Date.now() - Number(S.lastRateLimitedAt) < 30 * 60 * 1000) {
+              S.autoWhy = '刚被限流，' + Math.max(1, Math.round((30 * 60 * 1000 - (Date.now() - Number(S.lastRateLimitedAt))) / 60000)) + ' 分钟后再试';
+              return;
+            }
             const day = cstDay(), hm = cstHM();
             // A19（2026-09-21 用户报"启用了自动今天却没有自动"）：**判据里不能有 `collectDay`**。
             //   实测根因：09-20 凌晨 01:11 有一轮（手工/菜单）把 `collectDay` 写成 `2026-09-20`，
@@ -2087,7 +2314,7 @@ const roundPromptLive = async (date, reason, since, mode) => {
             S.autoWhy = '欠账 ⇒ 触发（最近应跑 ' + dueKey + '，上次成功 ' + (lastOkKey || '无')
                       + '，现在 ' + day + ' ' + hm + '）';
             S.autoFiredAt = Date.now();
-            saveState();
+            if (await saveState() !== 'saved') return;
             const autoFireFail = (why) => {
               S.autoFireRetryTries = (Number(S.autoFireRetryTries) || 0) + 1;
               S.autoFireRetryAt = Date.now() + 10 * 60 * 1000;
@@ -2120,7 +2347,16 @@ const roundPromptLive = async (date, reason, since, mode) => {
       // 即时水合：apply 之后 S 还是默认值，而 /state 与自动调度都直接读 S
       // （历史上只有 /ss、/chat、/tell 会 loadState → 插件一重建，面板先看到的是 demo 条目、
       //  自动调度也拿不到 auto/autoTime。这里补一次 fire-and-forget 的载入）
-      try { loadState() } catch (e) { noteError('boot-loadState', e) }
+      void loadState().then(async () => {
+        S.stateLoading = false;
+        if (S.stateNeedsMigration) {
+          S.stateNeedsMigration = false;
+          await saveState();
+        }
+      }).catch((e) => {
+        S.stateReadBlocked = true;
+        noteError('boot-loadState', e);
+      }).finally(() => { S.stateLoading = false });
 
       // `/state?slim=1` → **瘦身投影**（2026-09-15 成本审计后加）：
       //   为什么：39 条的**整表正文 ≈ 47 KB（≈2.3 万 token）**，而主 agent 每轮要读它好几次、回写一次
@@ -2136,7 +2372,7 @@ const roundPromptLive = async (date, reason, since, mode) => {
         const q = String((req && req.url) || '');
         const slim = /[?&]slim=1(&|$)/.test(q);
         // 双会话懒初始化：第一次被问 /state 就后台把两个会话备好（幂等、不阻塞本次响应；**带版本号**，改逻辑后会再跑一次）
-        if ((!S.slotsInitAt || Number(S.slotsInitVer || 1) < 4) && !S.slotsInitBusy) { try { ensureBothSlots() } catch (e) { noteError('slots-init-kick', e) } }
+        if (!S.stateLoading && !S.stateReadBlocked && (!S.slotsInitAt || Number(S.slotsInitVer || 1) < 4) && !S.slotsInitBusy) { try { ensureBothSlots() } catch (e) { noteError('slots-init-kick', e) } }
         return {
         auto: S.auto, autoTime: S.autoTime, busy: S.busy, lastCollectAt: S.lastCollectAt,
         lastDoneAt: S.lastDoneAt, busySince: S.busySince, collectDay: S.collectDay, autoFiredDay: S.autoFiredDay,
@@ -2173,6 +2409,7 @@ const roundPromptLive = async (date, reason, since, mode) => {
         mainSessionId: S.mainSessionId,
         seeded: S.seeded, wakeText: slim ? '' : TPL(WAKE_TEXT), wakeTextLen: TPL(WAKE_TEXT).length, lastError: S.lastError,
         routeError: S.lastRouteError, saveOk: S.lastSaveOk,
+        stateReadBlocked: !!S.stateReadBlocked, saveBlocked: !!S.saveBlocked,
         quoteId: S.quote ? String(S.quote.id || '') : '',
         quoteNo: S.quote ? String(S.quote.no || '') : '',
         quoteText: S.quote ? String(S.quote.text || '') : '',
@@ -2247,6 +2484,14 @@ const roundPromptLive = async (date, reason, since, mode) => {
         // 其余字段照抄（单条额外字段 ≤2KB），响应里回显收到过哪些 —— 让主 agent 能自证"我的新字段没被吃掉"。
         const PROTECT = ['__proto__', 'constructor', 'prototype'];
         const extraKeys = new Set(); let droppedFields = 0;
+        // A111（2026-11-23 Codex 复审）：**游标只能随"真实落盘"前移**。
+        //   旧版先把 lastCollectAt/collectDay 提交进内存、再 saveState，落盘失败也照样 ok:true ——
+        //   于是"采集基准前移了"只存在于内存里，重启即回滚，而主 agent 已经按成功回报了。
+        //   现在先留一份改动前的游标，落盘失败就回滚游标并把这次调用判为失败（条目仍留在内存里给人看）。
+        const cursor0 = { lastCollectAt: S.lastCollectAt, collectDay: S.collectDay, lastDoneAt: S.lastDoneAt,
+                          pendingCollect: S.pendingCollect ? { ...S.pendingCollect } : null,
+                          resumeCount: S.resumeCount,
+                          pendingAsk: S.pendingAsk ? { ...S.pendingAsk } : null };
         S.items = list.map((x, i) => {
           const raw = x || {};
           const out = {
@@ -2281,7 +2526,16 @@ const roundPromptLive = async (date, reason, since, mode) => {
           S.resumeCount = 0;                       // A21：交付成功 ⇒ 补跑计数归零
           S.pendingAsk = null;                     // A22：这一轮交付了，之前那个提问不再需要人回答
         }
-        return { ok: true, count: S.items.length, persist: await saveState(),
+        const pr = await saveState();
+        if (pr !== 'saved') {
+          S.lastCollectAt = cursor0.lastCollectAt; S.collectDay = cursor0.collectDay;
+          S.lastDoneAt = cursor0.lastDoneAt; S.pendingCollect = cursor0.pendingCollect;
+          S.resumeCount = cursor0.resumeCount; S.pendingAsk = cursor0.pendingAsk;
+          return { ok: false, error: '状态未能落盘（' + String(S.saveBlockedMsg || pr) + '）⇒ 采集基准未前移；'
+                   + '条目只留在内存里，重启会丢', count: S.items.length, persist: pr, cursorCommitted: null,
+                   extraFields: Array.from(extraKeys), droppedFields };
+        }
+        return { ok: true, count: S.items.length, persist: pr,
                  extraFields: Array.from(extraKeys), droppedFields, cursorCommitted: committed };
       });
       // 面板**按 id 打补丁**（2026-09-15 成本审计后加）：`{upsert:[{id,...}], drop:[id], order:[id], clearNew:bool}`
@@ -2339,6 +2593,11 @@ const roundPromptLive = async (date, reason, since, mode) => {
         // A11：patch 与整表替换**同一判据**（旧版这里也是静默 slice）。
         if (list.length > CAP2) return { ok: false, error: '打补丁后条目数 ' + list.length + ' 超过上限 ' + CAP2
           + '，已拒绝本次补丁（现有列表未改动）', count: S.items.length, limit: CAP2 };
+        const list0 = S.items;
+        const cursor0 = { lastCollectAt: S.lastCollectAt, collectDay: S.collectDay, lastDoneAt: S.lastDoneAt,
+                          pendingCollect: S.pendingCollect ? { ...S.pendingCollect } : null,
+                          resumeCount: S.resumeCount,
+                          pendingAsk: S.pendingAsk ? { ...S.pendingAsk } : null };
         S.items = list;
         // A04：交付成功（补丁后仍非空）才提交采集游标 —— 与 /items 同一判据。
         let committed = null;
@@ -2359,6 +2618,15 @@ const roundPromptLive = async (date, reason, since, mode) => {
         // A07（审计 H03）：**持久化结果必须真实回传**。旧版这里写死 `persist: 'saved'`，
         //   于是 saveState 失败（磁盘满/权限/路径没了）时接口照样报 saved。
         const pr = await saveState();
+        if (pr !== 'saved') {
+          // A111：同 /items —— 没落盘就不承诺成功、不推进持久游标（内存里的条目保留，方便继续看/重试）
+          S.lastCollectAt = cursor0.lastCollectAt; S.collectDay = cursor0.collectDay;
+          S.lastDoneAt = cursor0.lastDoneAt; S.pendingCollect = cursor0.pendingCollect;
+          S.resumeCount = cursor0.resumeCount; S.pendingAsk = cursor0.pendingAsk;
+          return { ok: false, error: '状态未能落盘（' + String(S.saveBlockedMsg || pr) + '）⇒ 采集基准未前移；'
+                   + '补丁只留在内存里，重启会丢', count: S.items.length, persist: pr, cursorCommitted: null,
+                   added: added, changed: changed, extraFields: Array.from(extraKeys) };
+        }
         return {
           ok: true, count: S.items.length, added: added, changed: changed,
           dropped: cur.length + added - S.items.length, extraFields: Array.from(extraKeys),

@@ -124,7 +124,10 @@ def load(date, min_len=4):
                      #   而 `units_day` 用的就是这个 loader → 截断发生在**任何视图之前**，
                      #   于是"把 units 的输出上限调大"根本无效（实测重切后仍找不到那条公告的尾巴）。
                      #   语料在内存里保持**完整**，要不要省略由各个**视图**自己决定（见 clip()）。
-                     "text": t})
+                     # raw 一并带出：2026-11-08 起 units_day 用它判断"text 是否已被上游削平"
+                     #   （旧数据里 text 曾被写到恰好 800 字，尾部只能从 raw 找回）。
+                     "text": t,
+                     "raw": j.get("raw") or ""})
     rows.sort(key=lambda r: r["ts"])
     return rows
 

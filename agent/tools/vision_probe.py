@@ -25,7 +25,7 @@ import urllib.request
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT = os.path.join(PROFILE, "output")
-# 2026-10-18 端口对调：门卫（E:\Models\sidecar-mover.mjs）坐在 Ollama 原来的 11434 上，
+# 2026-10-18 端口对调：门卫（sidecar-mover）坐在 Ollama 原来的 11434 上，
 # Ollama 本体挪到 11437 —— 所以这里的地址**不用改**，照旧写 11434 就是走门卫。
 # 门卫在两种情况下直接回 503（调用方据此走降级路径）：
 #   ① GPU 上有大模型（27B / 35B-A3B）在跑、或 5 分钟内刚跑过；② 检测到正在打游戏。

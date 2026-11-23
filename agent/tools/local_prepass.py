@@ -40,14 +40,14 @@ DAYS = os.path.join(PROFILE, "output", "days")
 LOGS = os.path.join(PROFILE, "output", "logs")
 URL = "http://127.0.0.1:11434/api/chat"
 TAGS_URL = "http://127.0.0.1:11434/api/tags"
-GATE_URL = "http://127.0.0.1:11434/__route"      # 门卫自检（见 E:\Models\sidecar-mover.mjs）
+GATE_URL = "http://127.0.0.1:11434/__route"      # 门卫自检（见 sidecar-mover）
 
 # 2026-10-21：**模型名不再写死**。10-14 用户把本机模型换过一轮（mimo-v2.6:9b-q6_K /
 # qwen3.8:27b-ud-q3_K_XL / qwen3.6:35b-a3b-mtp-q4_K_M），而这里原来写死的 `qwen3.6:35b-a3b`
 # 这三个都不是 ⇒ 每轮 33/33 块 HTTP 404，10-15~10-20 **连挂 5 轮**，每轮都在 round_state 里
 # 问同一句"默认值要不要改"。改成**现查 /api/tags 现选**，名字再变也不会哑火。
 #
-# 为什么把 9B 排在前面（而不是更大的 27B/35B）：11434 上有门卫（`E:\Models\sidecar-mover.mjs`），
+# 为什么把 9B 排在前面（而不是更大的 27B/35B）：11434 上有门卫（`sidecar-mover`），
 # GPU 上一旦出现"别的模型"（或 5 分钟内出现过 / games.txt 里的游戏在跑），它就把 9B 侧车卸下、
 # 并对**会触发装载的请求回 503** —— 而同一轮的 `3i 本地过筛` / `3j 图片分诊` 也走 11434、也要 9B。
 # 初提只是"提示"，不值得为它把整条视觉线打断。要大模型时显式 `--model qwen3.6:35b-a3b-mtp-q4_K_M`

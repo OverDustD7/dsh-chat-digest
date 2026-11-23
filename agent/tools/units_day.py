@@ -105,14 +105,28 @@ def dedup_global(units, minlen=8):
 CLIP_HEAD, CLIP_TAIL = 400, 400
 
 
-def clip(t):
-    """返回 (要写进视图的文本, 省略字数)。不超过 800 字原样返回。"""
+def clip(t, raw=None):
+    """返回 (要写进视图的文本, 省略字数)。
+
+    `raw` 更长时以它为准：`text` 可能是上游写入时就被削平的残片（2026-11-08 复核：10,233 条恰好 800 字），
+    拿残片做头尾裁剪等于永远看不到尾部。判据是**与 raw 比长度**，不是与 800 比。
+    """
+    if raw and len(raw) > len(t):
+        t = raw
     n = len(t)
     if n <= CLIP_HEAD + CLIP_TAIL:
         return t, 0
     head, tail = t[:CLIP_HEAD], t[-CLIP_TAIL:]
     omitted = n - len(head) - len(tail)
     return head + (" ……[省略 %d 字]…… " % omitted) + tail, omitted
+
+
+def raw_hint(text, index):
+    """在原始行里找这段单元文本的来源 raw（取最长的那个），用于补回被削掉的尾部。"""
+    for row_text, row_raw in index:
+        if row_raw and row_text and text.startswith(row_text[:60]) and len(row_raw) > len(text):
+            return row_raw
+    return None
 
 
 def main():
@@ -130,7 +144,11 @@ def main():
         return 1
     # split_day.load 返回的字段名是 text/chat/who，这里补成 units 需要的形状
     rows = [{"chat": r["chat"], "chat_name": r["chat"], "sender": r["who"], "sender_name": r["who"],
-             "ts": r["ts"], "text": r["text"]} for r in raw]
+             "ts": r["ts"], "text": r["text"], "raw": r.get("raw") or ""} for r in raw]
+    # raw 长于 text 的原始行（按长度降序）：单元文本以它开头时，用 raw 补回被削掉的尾部
+    raw_index = sorted(((r["text"], r["raw"]) for r in rows if r.get("raw") and len(r["raw"]) > len(r["text"])),
+                       key=lambda x: -len(x[1]))
+    n_truncated_rows = len(raw_index)
     for r in rows:
         r["sender"] = r["sender"] or "?"
     u1 = fold(rows, win)
@@ -153,10 +171,12 @@ def main():
            % (date, len(raw), len(rows), len(u1), len(u2), 100.0 * (1 - len(u2) / max(1, len(rows)))),
            "", "> 机械规则产出（不是筛选）：同一人连续发言折叠 + 复读/接龙合并 + 问答标注。",
            "> 供「分片全覆盖、逐条读」用 —— **读这些单元＝读过全部消息**，"
-           "**唯一例外**：超过 %d 字的长消息只保留「**头 %d 字 + 尾 %d 字**」、中间以 `……[省略 N 字]……` 显式标出"
+           "**唯一例外**：长消息只保留「**头 %d 字 + 尾 %d 字**」、中间以 `……[省略 N 字]……` 显式标出"
            "（公告类的动作与链接通常在**末尾**，所以尾部一定要留；2026-09-15 事故：原来砍到 260 字，"
            "把一条 525 字公告尾部的『反馈问卷/招募问卷』整段砍掉 → 漏报）。"
-           % (CLIP_HEAD + CLIP_TAIL, CLIP_HEAD, CLIP_TAIL), "",
+           "阈值与 **raw 长度**比较，不与 800 比较；本日有 %d 行的 raw 长于 text（说明上游曾削平过），"
+           "这些行按 raw 取头尾。"
+           % (CLIP_HEAD, CLIP_TAIL, n_truncated_rows), "",
            "| 会话 | 原始行 | 单元 | 压缩 |", "|---|---|---|---|"]
     for name, (a, b) in top:
         out.append("| %s | %d | %d | %.0f%% |" % (name[:26], a, b, 100.0 * (1 - b / max(1, a))))
@@ -165,7 +185,7 @@ def main():
     for u in u2:
         hm = dt.datetime.fromtimestamp(u["ts"], TZ).strftime("%H:%M")
         mark = " ×%d人" % u["rk"] if u["rk"] > 1 else (" +%d" % (u["n"] - 1) if u["n"] > 1 else "")
-        txt, elided = clip(u["text"])
+        txt, elided = clip(u["text"], raw_hint(u["text"], raw_index))
         if elided:
             n_clip += 1
             n_clip_chars += elided

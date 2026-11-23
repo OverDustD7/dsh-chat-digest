@@ -30,7 +30,8 @@
 import os as _os
 import sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
-from pconf import (C, agent_root, pkg_dir, scripts_dir, work_dir, python_exe, external_tool, out_dir)  # noqa: E402
+from pconf import (C, agent_root, pkg_dir, scripts_dir, work_dir, python_exe, python_argv,
+                   external_tool, out_dir, EXTERNAL_TOOL_UNAVAILABLE)  # noqa: E402
 
 WX_ACCOUNT_DIR = C.get("wx_account_dir")
 WX_MSG_GLOB = C.get("wx_msg_glob")
@@ -39,7 +40,7 @@ QQ_DATA_DIR = C.get("qq_data_dir")
 WORK_DIR = work_dir()
 SELF_WXID = C.get("self_wxid")
 # A55：原来只定义了 SELF_WXID，SELF_QQ 从没定义过 —— 这两步一跑就 NameError
-SELF_QQ = C.req("self_qq", "QQ 号（qq_data_dir 下就是它那个账号目录）")
+SELF_QQ = C.get("self_qq")
 MAIN_GROUP = C.get("main_group")
 
 OUT_DIR = out_dir()
@@ -58,11 +59,10 @@ HERE = agent_root()   # 工作区
 SCRIPTS = scripts_dir()
 TOOLS = os.path.join(pkg_dir(), "agent", "tools")
 VENV_PY = python_exe()
-NT_UTIL = external_tool("nt_msg_db_util", "3.export.py")
 
 WX_KEY = C.req("wx_key", "微信库解密密钥")
-QQ_KEY = C.req("qq_key", "QQ 库解密密钥")
-QQ_SRC = os.path.join(QQ_DATA_DIR, SELF_QQ, "nt_qq", "nt_db", "nt_msg.db")
+QQ_KEY = C.get("qq_key")
+QQ_SRC = os.path.join(QQ_DATA_DIR, SELF_QQ, "nt_qq", "nt_db", "nt_msg.db") if QQ_DATA_DIR and SELF_QQ else ""
 #: A62（2026-09-27 用户定案）：**QQ 源库陈旧/缺失必须看得见**。
 #:   实测 2026-09-19 ~ 09-26 连续 8 天 QQ 0 条，而「2-QQ解密+导出」「2b-QQ结构化导出」
 #:   两步每天都报 `ok` —— 这条支线断了 8 天，报告里一个字都没有。判据只有一个：**源库 mtime**。
@@ -73,6 +73,8 @@ QQ_STALE_DAYS = float(os.environ.get("CF_QQ_STALE_DAYS") or 3)
 
 def qq_source_state():
     """返回 (年龄天数 或 None, 一句话状态)。None 表示源库不存在（路径错 / 这台机器没装 QQ）。"""
+    if not QQ_SRC:
+        return None, "未配置 QQ 源库"
     try:
         age = (time.time() - os.path.getmtime(QQ_SRC)) / 86400.0
     except OSError:
@@ -228,6 +230,63 @@ def day_window(date):
     return n, hm(first), hm(last)
 
 
+#: 解释器开关里"后面还跟一个值"的那几个：`-X utf8` 是两个 token，`utf8` 不是脚本名。
+_FLAGS_WITH_VALUE = ("-X", "-W", "-Q", "--check-hash-based-pycs")
+
+
+def _script_index(argv):
+    """argv 里脚本元素的下标；找不到返回 -1。
+
+    解释器开关会插在脚本前面（`-X utf8`、`-B`、`-u`），所以"脚本在 argv[1]"
+    这个旧假设不能再用；带值的开关要连值一起跳过。
+    """
+    i = 1
+    while i < len(argv):
+        a = str(argv[i])
+        if a in _FLAGS_WITH_VALUE:
+            i += 2
+            continue
+        if a.startswith("-"):
+            i += 1
+            continue
+        return i
+    return -1
+
+
+def _argv_display(argv):
+    """步骤标题只回显"解释器 + 脚本"两级。
+
+    后面的位置参数里有解密 key（`wx_decrypt3.py <key>` 这类），还有本机路径；
+    它们对"这一步在跑什么"没有增量信息，进日志只会变成泄露面。
+    解释器开关同理不进标题。
+    """
+    names = []
+    if argv:
+        names.append(os.path.basename(str(argv[0])))
+    i = _script_index(argv)
+    if i > 0:
+        names.append(os.path.basename(str(argv[i])))
+    return " ".join(names)
+
+
+#: 明确已知把 key 当位置参数用的三个解密包装。只对这三个做掩码，不做通用凭据处理。
+_DECRYPT_WRAPPERS = ("wx_decrypt3.py", "wx_decrypt_more.py", "qq_decrypt_hex.py")
+
+
+def _redact_known_key(argv, text):
+    """subprocess 尾部输出里若出现本步那枚 key，就地换成占位符。"""
+    if not text:
+        return text
+    i = _script_index(argv)
+    if i < 0:
+        return text
+    script = os.path.basename(str(argv[i]))
+    if script not in _DECRYPT_WRAPPERS or len(argv) <= i + 1:
+        return text
+    key = str(argv[i + 1])
+    return text.replace(key, "<redacted-key>") if key else text
+
+
 def run(label, argv, check_paths=(), check_lines=(0, None), timeout=1800, status_map=None,
         critical=False, empty_ok=False, freshness_grace=300):
     """执行一步并自检。check_lines=(min_expected, max_allowed_or_None)
@@ -259,18 +318,31 @@ def run(label, argv, check_paths=(), check_lines=(0, None), timeout=1800, status
     work = out_dir()
     try:
         os.makedirs(work, exist_ok=True)
-    except OSError:
-        work = SCRIPTS
+    except OSError as exc:
+        # A65 的另一半：私有工作目录建不出来就**不跑这一步**，绝不退回包内代码目录。
+        # 退回代码目录既违反"每步 cwd 必须私有"，也会让第三方工具把日志/密钥写进包里。
+        reason = getattr(exc, "strerror", None) or exc.__class__.__name__
+        print("\n=== [%s]" % label)
+        print("    -> WORKDIR-UNAVAILABLE（私有工作目录不可用：%s）" % work)
+        return {"step": label, "status": "WORKDIR-UNAVAILABLE", "seconds": 0.0,
+                "notes": ["私有工作目录不可用：%s（%s）" % (work, reason),
+                          "本步未执行；cwd 不回落到包内代码目录"],
+                "critical": bool(critical)}
     argv = list(argv)
-    if len(argv) > 1 and not os.path.isabs(argv[1]):
-        argv[1] = os.path.join(SCRIPTS, argv[1])
-    print("\n=== [%s] %s" % (label, " ".join(os.path.basename(a) for a in argv)))
+    # bundled 模式下补 `-X utf8`：嵌入分发的 ._pth 让 PYTHONIOENCODING/PYTHONUTF8 失效，
+    # 而下面按 UTF-8 解码子进程输出 —— 不补这一步，中文以外的字符会在子进程里编码失败。
+    # node 等非 Python 调用原样返回，不受影响。
+    argv = python_argv(argv, VENV_PY)
+    si = _script_index(argv)
+    if si > 0 and not os.path.isabs(str(argv[si])):
+        argv[si] = os.path.join(SCRIPTS, argv[si])
+    print("\n=== [%s] %s" % (label, _argv_display(argv)))
     try:
         p = subprocess.run(argv, cwd=work, capture_output=True, text=True,
                            encoding="utf-8", errors="replace", timeout=timeout)
         tail = (p.stdout or "").strip().splitlines()[-4:]
         for line in tail:
-            print("    " + line)
+            print("    " + _redact_known_key(argv, line))
         if p.returncode == 0:
             status = "ok"
         elif status_map and p.returncode in status_map:
@@ -332,15 +404,36 @@ def main():
     # 但它的产物陈旧会被新鲜度自检抓成 STALE → 记 degraded，报告里看得见。
     steps.append(run("1-微信DB解密", [VENV_PY, "wx_decrypt3.py", WX_KEY],
                      ["output/wx/message_0_plain.db", "output/wx/contact_plain.db"],
+                     status_map={EXTERNAL_TOOL_UNAVAILABLE: "缺少包外微信解密工具"},
                      critical=True))
-    steps.append(run("2-QQ解密+导出",
-                     [VENV_PY, "qq_decrypt_hex.py", QQ_KEY, QQ_SRC,
-                      os.path.join(HERE, "output", "qq", "nt_msg_plain.db")],
-                     ["output/qq/nt_msg_plain.db"], critical=False))
-    steps.append(run("2b-QQ结构化导出",
-                     [VENV_PY, NT_UTIL, "--src", os.path.join(HERE, "output", "qq", "nt_msg_plain.db"),
-                      "--dst", os.path.join(HERE, "output", "qq", "nt_msg_export.db")],
-                     ["output/qq/nt_msg_export.db"], critical=False))
+
+    qq_exporter = None
+    if QQ_KEY and QQ_SRC:
+        try:
+            qq_exporter = external_tool("nt_msg_db_util", "3.export.py", required_file=True)
+        except SystemExit:
+            qq_note = "缺少 QQ 导出工具；检查私人配置的 external_dir"
+    else:
+        qq_note = "未配置 QQ 账号、数据目录或密钥"
+    if qq_exporter is None:
+        for label in ("2-QQ解密+导出", "2b-QQ结构化导出"):
+            steps.append({"step": label, "status": "未运行", "seconds": 0.0,
+                          "notes": [qq_note], "critical": False})
+    else:
+        qq_plain = os.path.join(HERE, "output", "qq", "nt_msg_plain.db")
+        decrypted = run("2-QQ解密+导出", [VENV_PY, "qq_decrypt_hex.py", QQ_KEY, QQ_SRC, qq_plain],
+                        ["output/qq/nt_msg_plain.db"],
+                        status_map={EXTERNAL_TOOL_UNAVAILABLE: "缺少包外 QQ 原始密钥适配器"})
+        steps.append(decrypted)
+        if decrypted["status"] == "ok":
+            export_argv = python_argv(
+                [VENV_PY, qq_exporter, "--src", qq_plain,
+                 "--dst", os.path.join(HERE, "output", "qq", "nt_msg_export.db")], VENV_PY)
+            export_argv.insert(1, "-B")
+            steps.append(run("2b-QQ结构化导出", export_argv, ["output/qq/nt_msg_export.db"]))
+        else:
+            steps.append({"step": "2b-QQ结构化导出", "status": "未运行", "seconds": 0.0,
+                          "notes": ["本轮 QQ 解密未成功；保留已有导出"], "critical": False})
     steps.append(run("3-当天消息提取(不覆盖窗口文件)", [VENV_PY, "extract_day.py", date],
                      ["output/days/%s.jsonl" % date], check_lines=(1, None),
                      critical=True, empty_ok=True))

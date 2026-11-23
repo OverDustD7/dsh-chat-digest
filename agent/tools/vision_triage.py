@@ -8,7 +8,7 @@
     · 判出"有行动项 / 有关键字段"的 → **强模型回看原图**（这是必须的，别省）
     · 判出"表情包/梗图/纯生活照/无信息截图"的 → 图**不进强模型**（省的就是这一大块）
   实测质量（2026-09-14，8 张样本人审）：两个 action 判断都命中真事（羽毛球队群二维码"7 天内有效"、
-  算力券页面"余额与截止日期"）；我亲自核对一张判 noise 的文字图（谐音梗贯口）→ 判得对。
+  某张资源页面"余额与截止日期"图）；我亲自核对一张判 noise 的文字图（谐音梗贯口）→ 判得对。
 
 判据（"宁可疑不放过"）：
   need_review = action==true 或 fields 非空 或 **解析失败/超时**（fail-open：绝不当 noise 丢掉）
@@ -52,7 +52,7 @@ HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # `%USERPROFILE%\.dsh\dsh-chat-digest`（C:）时，`os.path.relpath(图, HERE)` 会抛
 # `ValueError: path is on mount 'C:', start on mount 'D:'` ⇒ 推理跑完、写产物时整步炸
 # （2026-10-02 `3j` 89 秒跑完却 MISSING `_vision.md` 的真因）。历史形态就是 `output\window\images\…`。
-# 2026-10-18 端口对调：门卫（E:\Models\sidecar-mover.mjs）坐在 Ollama 原来的 11434 上，
+# 2026-10-18 端口对调：门卫（sidecar-mover）坐在 Ollama 原来的 11434 上，
 # Ollama 本体挪到 11437 —— 所以这里的地址**不用改**，照旧写 11434 就是走门卫。
 # 门卫在两种情况下直接回 503（调用方据此走降级路径）：
 #   ① GPU 上有大模型（27B / 35B-A3B）在跑、或 5 分钟内刚跑过；② 检测到正在打游戏。

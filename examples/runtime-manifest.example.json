@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "platform": "win32",
+  "arch": "x64",
+  "python": "python/python.exe",
+  "tools": {
+    "wechat-decrypt": "vendor/WeChatDataAnalysis/src/wechat_decrypt_tool/wechat_decrypt.py",
+    "nt_msg_db_util-decrypt": "vendor/nt_msg_db_util/qq_decrypt_hex.py",
+    "nt_msg_db_util-export": "vendor/nt_msg_db_util/3.export.py"
+  }
+}

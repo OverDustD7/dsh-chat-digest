@@ -8,11 +8,11 @@
 
 # ── 微信 ──────────────────────────────────────────────────────────────
 # 微信数据根（xwechat_files 下你自己的那层，通常是 wxid_xxx）
-wx_account_dir: 'C:\Users\<you>\Documents\xwechat_files\wxid_xxxxxxxxxxxx'
+wx_account_dir: '{{WECHAT_ACCOUNT_DIR}}'
 # 附件（图片/文件）所在的 msg 目录，可用 * 通配
-wx_msg_glob: 'C:\Users\<you>\Documents\xwechat_files\*\msg'
+wx_msg_glob: '{{WECHAT_MSG_GLOB}}'
 # 取数据库密钥用的 kvcomm 目录（微信 4.x）
-wx_key_dir: 'C:\Users\<you>\AppData\Roaming\Tencent\xwechat\net\kvcomm'
+wx_key_dir: '{{WECHAT_KEY_DIR}}'
 # 微信 4.x 的数据库密钥（64 位十六进制）。**必填** —— 脚本缺它会打印键名并 exit 2。
 #   自己怎么取：见 README「取数管线」；**别把它提交进任何仓库**。
 wx_key: '<64-hex-wechat-db-key>'
@@ -24,24 +24,26 @@ self_wxid: 'wxid_xxxxxxxxxxxx'
 main_group: ''
 
 self_qq: '<your-qq>'
-qq_data_dir: 'C:\Users\<you>\Documents\Tencent'
-# QQ（NT 版）的数据库密钥（64 位十六进制）。**必填** —— 同上。
+qq_data_dir: '{{QQ_DATA_DIR}}'
+# QQ（NT 版）的数据库密钥（64 位十六进制）。仅在运行 QQ 导入时需要。
 qq_key: '<64-hex-qq-db-key>'
 
 # ── 工作目录（管线的产物都写这里，不放包里）────────────────────────────
 # 主 agent 的工作区；插件的 agentCwd 建议指到这里
-work_dir: 'C:\path\to\your\pipeline-workspace'
-output_dir: 'C:\path\to\your\pipeline-workspace\output'
+work_dir: '{{PIPELINE_WORK_DIR}}'
+output_dir: '{{PIPELINE_OUTPUT_DIR}}'
 
 # ── 只保留这些群（留空 = 不筛）───────────────────────────────────────
 groups: []
 
-# ── A35（2026-09-27）：下面这几个键**都不用配**，缺省就在插件目录里 ──────────────
+# ── 私人目录与外置导入配置 ───────────────────────────────────────────
 #   work_dir      管线读写的工作区根；缺省＝私人 profile 的物理目录
 #   output_dir    产物根；缺省＝私人 profile/output
-#   python        跑管线/工具用哪个解释器；缺省＝宿主缺省或 PATH 里的 python
-#   external_dir  **包外第三方工具**的根目录（只有你要跑内置取数管线时才需要）：
-#                   微信库解密：<external_dir>/WeChatDataAnalysis
-#                   QQ 库导出： <external_dir>/nt_msg_db_util/3.export.py
-#                 这两个是第三方项目（体积 240 MB / 16 MB），不随本包发布；
-#                 不用内置管线的人完全不需要它们。
+#   python        外置 Python 解释器；与插件配置中的 python 对齐
+#   external_dir  包外工具根的绝对路径；仅运行取数管线时需要：
+#                   WeChatDataAnalysis/src/wechat_decrypt_tool/wechat_decrypt.py
+#                   nt_msg_db_util/qq_decrypt_hex.py
+#                   nt_msg_db_util/3.export.py
+#                 保留工具的配套模块、许可和声明。入口和迁移说明见 README。
+# python: '{{PYTHON_EXE}}'
+# external_dir: '{{EXTERNAL_TOOLS_DIR}}'

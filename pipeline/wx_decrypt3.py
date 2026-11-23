@@ -13,8 +13,18 @@ Outputs -> <out_dir>/wx/*_plain.db
 # 去哪个文件填，并以退出码 2 结束。
 import os as _os
 import sys as _sys
+_sys.dont_write_bytecode = True
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
-from pconf import (C, agent_root, scripts_dir, work_dir, python_exe, external_tool, out_dir)  # noqa: E402
+from pconf import (C, agent_root, scripts_dir, work_dir, python_exe, external_tool, out_dir,
+                   private_tool_state, ensure_utf8_stdio)  # noqa: E402
+
+# 2026-10-26：包内解释器是 isolated + ignore_environment，PYTHONIOENCODING 不生效；
+#   本脚本会打印中文与密钥状态，直接调用时也必须能安全输出。
+ensure_utf8_stdio()
+
+# 2026-10-26：**先**把供应商工具的日志/密钥目录钉在私人 profile 内，再导入供应商模块。
+#   供应商默认取 env 或 Path.cwd()；独立调用本脚本时 cwd 可能是包内代码目录。
+private_tool_state()
 
 WX_ACCOUNT_DIR = C.get("wx_account_dir")
 WX_MSG_GLOB = C.get("wx_msg_glob")
@@ -33,9 +43,9 @@ import types
 
 HERE = agent_root()          # <工作区>\pipeline
 ROOT = agent_root()                                # <工作区>
-WX_TOOL = external_tool("WeChatDataAnalysis")   # <上级目录>\WeChatDataAnalysis
-SRC = os.path.join(WX_TOOL, "src")
-PKG_DIR = os.path.join(SRC, "wechat_decrypt_tool")
+ENTRY = external_tool("WeChatDataAnalysis", "src", "wechat_decrypt_tool",
+                      "wechat_decrypt.py", required_file=True)
+PKG_DIR = os.path.dirname(ENTRY)
 
 # fake package so relative imports work without executing __init__.py
 pkg = types.ModuleType("wechat_decrypt_tool")

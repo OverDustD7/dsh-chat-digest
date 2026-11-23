@@ -9,8 +9,16 @@
 # 去哪个文件填，并以退出码 2 结束。
 import os as _os
 import sys as _sys
+_sys.dont_write_bytecode = True
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
-from pconf import (C, agent_root, scripts_dir, work_dir, python_exe, external_tool, out_dir)  # noqa: E402
+from pconf import (C, agent_root, scripts_dir, work_dir, python_exe, external_tool, out_dir,
+                   private_tool_state, ensure_utf8_stdio)  # noqa: E402
+
+# 2026-10-26：包内解释器 isolated + ignore_environment，环境变量改不了编码；进程内切 UTF-8。
+ensure_utf8_stdio()
+
+# 2026-10-26：**先**把供应商工具的日志/密钥目录钉在私人 profile 内，再导入供应商模块。
+private_tool_state()
 
 WX_ACCOUNT_DIR = C.get("wx_account_dir")
 WX_MSG_GLOB = C.get("wx_msg_glob")
@@ -30,8 +38,10 @@ import types
 
 HERE = agent_root()
 ROOT = agent_root()
-WX_TOOL = external_tool("WeChatDataAnalysis")
-PKG_DIR = os.path.join(WX_TOOL, "src", "wechat_decrypt_tool")
+ENTRY = external_tool("WeChatDataAnalysis", "src", "wechat_decrypt_tool",
+                      "wechat_decrypt.py", required_file=True)
+PKG_DIR = os.path.dirname(ENTRY)
+
 pkg = types.ModuleType("wechat_decrypt_tool")
 pkg.__path__ = [PKG_DIR]
 pkg.__version__ = "0.0.0"

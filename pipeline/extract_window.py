@@ -139,11 +139,38 @@ def wx_type_label(t):
     return WX_TYPE.get(t, "类型%d" % t)
 
 
+def _announcement_text(s):
+    """群公告（type 87）的正文与标题。
+
+    解码结果常是 `wxid_xxx:\\n<announcement>…`：开头不是 `<`，所以原来落进"纯文本"分支被截到 800 字，
+    而 `<datadesc>` 里的正文与链接正好在第 800 字之后 ⇒ 公告里的动作项与云盘链接整段丢失
+    （2026-11-08 复核：10,233 条 text 被削平到恰好 800 字）。这里按标签取，不管前缀。
+    """
+    if "<announcement" not in s and "<datadesc" not in s and "<datatitle" not in s:
+        return ""
+    out = []
+    for tag in ("datatitle", "datadesc"):
+        for m in re.finditer(r"<%s>(.*?)</%s>" % (tag, tag), s, re.S):
+            t = re.sub(r"<[^>]+>", " ", m.group(1))
+            try:
+                import html as _html
+                t = _html.unescape(t)
+            except Exception:
+                pass
+            t = re.sub(r"\s+", " ", t).strip()
+            if t and t not in out:
+                out.append(t)
+    return " | ".join(out)
+
+
 def wx_text_summary(decoded):
-    """Extract readable text from decoded XML or plain text."""
+    """Extract readable text from decoded XML or plain text. 正文不在这里截断。"""
     if decoded is None:
         return ""
     s = decoded.strip()
+    ann = _announcement_text(s)
+    if ann:
+        return ann
     if s.startswith("<"):
         out = []
         for tag in ("title", "des", "content"):
@@ -160,11 +187,12 @@ def wx_text_summary(decoded):
             body = re.sub(r"<[^>]+>", " ", m.group(1))
             body = re.sub(r"\s+", " ", body).strip()
             if body:
-                return body[:500]
+                return body
         if "<img" in s:
             return "[图片消息]"
         return "[XML: %s...]" % s[:80]
-    return s[:800]
+    # 不再截断：写入时就砍，下游永远看不到尾部；要省上下文应在渲染给模型时裁。
+    return s
 
 
 def qq_content_summary(content_json, text_field):

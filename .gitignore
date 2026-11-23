@@ -75,3 +75,14 @@ agent/docs/archive/
 #   绝不能进仓库、也不能进 npm 包。
 /local/
 /profile/
+
+# Local orchestration prompts, migration receipts and validation evidence.
+/.migration/
+
+# 内部整改报告：含本机路径，仅保留在本机，不进入任何公开 Git intake。
+# 精确到文件名，不影响同目录其它文档。
+/MODIFICATION_REPORT_2026-10-26.md
+
+# Locally assembled interpreters and third-party import tools stay outside the release.
+/runtime/
+/vendor/

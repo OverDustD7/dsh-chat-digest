@@ -27,7 +27,7 @@ function record(id, expected, actual){results.push({id,expected,actual,pass:JSON
  const check=new Function('S','ctx','turnState','turnEnds','saveState','checkCtx','cstHM','noteError','FAKE_SIGNAL',
    'routeOfActive','triggerRound',chunk('const checkBusy = async () => {','// 自动：')+'return checkBusy;')(
    S,{get:()=>({prompt:async()=>prompts++})},async()=>({open:false,ends:1,lastReason:'error'}),async()=>1,
-   async()=>{},async()=>{},()=>'',()=>{},{},()=> 'thu',()=>({ok:true}));
+   async()=> 'saved',async()=>{},()=>'',()=>{},{},()=> 'thu',()=>({ok:true}));
  await check();record('H01_error_auto_retry',1,prompts);
 }
 // A102（2026-10-01，另一会话在 madmodel 侧定案）：**流式截断签名**（`Unterminated string in JSON` /
@@ -41,7 +41,7 @@ async function busyProbe(S, turnStateImpl) {
   const fn = new Function('S','ctx','turnState','turnEnds','saveState','checkCtx','cstHM','noteError','FAKE_SIGNAL',
     'routeOfActive','triggerRound', src);
   const cb = fn(S, { get: () => ({ prompt: async (p) => { prompts.push(p) } }) }, turnStateImpl,
-    async () => 7, async () => {}, async () => {}, () => '18:00', () => {}, {},
+    async () => 7, async () => 'saved', async () => {}, () => '18:00', () => {}, {},
     () => 'thu', (reason, opts) => { triggers.push({ reason, opts }); return { ok: true } });
   await cb();                      // ← 构造出来的是"装着 checkBusy 的工厂"，必须真的调一次
   return { prompts, triggers };
@@ -107,7 +107,7 @@ const stFlaky = async () => ({ open: false, ends: 7, lastReason: 'error', lastEr
 }
 {
  const S={busy:false,sessionId:'test',routePick:'paratera',lastCollectAt:1};let prompts=0;
- const fire=new Function('S','cstDay','turnEnds','roundPrompt','roundPromptLive','FAKE_SIGNAL','noteError','saveState',chunk('const fireRound = async (sc, reason, pick, mode, probeRes) => {','// ---- 上下文用量探测')+'return fireRound;')(S,()=> '2026-09-20',async()=>0,()=>'',async()=>'',{},()=>{},async()=>{});
+ const fire=new Function('S','cstDay','turnEnds','roundPrompt','roundPromptLive','FAKE_SIGNAL','noteError','saveState',chunk('const fireRound = async (sc, reason, pick, mode, probeRes) => {','// ---- 上下文用量探测')+'return fireRound;')(S,()=> '2026-09-20',async()=>0,()=>'',async()=>'',{},()=>{},async()=> 'saved');
  await fire({prompt:async()=>prompts++},'manual',{},'full',{});
  record('H06_cursor_waits_for_successful_delivery',1,S.lastCollectAt);
 }
@@ -153,52 +153,111 @@ const PREV_DAY_SRC = (() => {
 })();
 const CST_AT = (nowMs) => (ms) => new Date((ms === undefined ? nowMs : Number(ms)) + 8 * 3600 * 1000);
 const prevDayOf = new Function(PREV_DAY_SRC + 'return prevDayOf;')();
-function autoTick(S, nowMs) {
+async function autoTick(S, nowMs, opts) {
+  const o = opts || {};
   let fires = 0, captured = null;
+  const reasons = [];
   const timerSvc = { interval: (cb) => { captured = cb; return null; } };
-  const fn = new Function('timerSvc', 'S', 'checkBusy', 'checkCtx', 'cstDay', 'cstHM', 'prevDayOf', 'saveState', 'triggerRound', 'noteError',
-    chunk('const offTick = timerSvc.interval(() => {', '}, 30000);') + '}, 30000); return offTick;');
+  const fn = new Function('timerSvc', 'S', 'checkBusy', 'checkCtx', 'cstDay', 'cstHM', 'prevDayOf', 'saveState', 'triggerRound', 'noteError', 'ctx', 'turnState',
+    chunk('const offTick = timerSvc.interval(async () => {', '}, 30000);') + '}, 30000); return offTick;');
   fn(timerSvc, S, async () => {}, async () => {}, (ms) => CST_AT(nowMs)(ms).toISOString().slice(0, 10),
-    (ms) => CST_AT(nowMs)(ms).toISOString().slice(11, 16), prevDayOf, async () => {},
-    () => { fires += 1; return { ok: true }; }, () => {});
-  captured();
-  return fires;
+    (ms) => CST_AT(nowMs)(ms).toISOString().slice(11, 16), prevDayOf, async () => o.persist ?? 'saved',
+    (reason) => { fires += 1; reasons.push(String(reason || '')); return { ok: true }; }, () => {},
+    // A105：补跑闸门会独立问一次会话有没有未结束的回合 ⇒ 探针给一个可控的 turnState
+    { get: () => (o.noSessionController ? null : {}) },
+    async () => (o.turnState === undefined ? { open: false, ends: 0, lastReason: '', ask: null } : o.turnState));
+  await captured();
+  return { fires, reasons, S };
 }
 const AT = (iso) => Date.parse(iso);
 {
  // 09-20 真实字段值：auto=true / autoTime=23:30 / collectDay=2026-09-20 / autoFiredDay=''
  //   旧代码在这里回 0 次（被 collectDay 拦掉），修好后必须触发 1 次。
  const S = { auto: true, autoTime: '23:30', busy: false, collectDay: '2026-09-20', autoFiredDay: '' };
- record('H09_auto_not_cancelled_by_manual_round', 1, autoTick(S, AT('2026-09-20T23:30:00+08:00')));
+ record('H09_auto_not_cancelled_by_manual_round', 1, (await autoTick(S, AT('2026-09-20T23:30:00+08:00'))).fires);
  // 已经在"最近这个应跑时刻"之后跑过 ⇒ 不欠（旧判据看 autoFiredDay，现在看上次成功的时刻）
  record('H10_auto_dedup_by_last_success', 0,
-   autoTick({ auto: true, autoTime: '23:30', busy: false, autoLastOkAt: AT('2026-09-20T23:31:00+08:00') },
-     AT('2026-09-20T23:31:00+08:00')));
+   (await autoTick({ auto: true, autoTime: '23:30', busy: false, autoLastOkAt: AT('2026-09-20T23:31:00+08:00') },
+     AT('2026-09-20T23:31:00+08:00'))).fires);
  // 刚跑过 80 分钟、还没跨过下一个 23:30 ⇒ 不欠
  record('H11_auto_not_due_before_next_boundary', 0,
-   autoTick({ auto: true, autoTime: '23:30', busy: false, autoLastOkAt: AT('2026-09-20T23:30:00+08:00') },
-     AT('2026-09-21T00:50:00+08:00')));
+   (await autoTick({ auto: true, autoTime: '23:30', busy: false, autoLastOkAt: AT('2026-09-20T23:30:00+08:00') },
+     AT('2026-09-21T00:50:00+08:00'))).fires);
  // A99 的核心：**宿主整晚没开**（09-30 23:30 时进程不在）⇒ 次日 14:00 一起来就该补跑
  record('H33_missed_night_fires_on_next_start', 1,
-   autoTick({ auto: true, autoTime: '23:30', busy: false, autoLastOkAt: AT('2026-09-28T23:30:21+08:00') },
-     AT('2026-10-01T14:00:00+08:00')));
+   (await autoTick({ auto: true, autoTime: '23:30', busy: false, autoLastOkAt: AT('2026-09-28T23:30:21+08:00') },
+     AT('2026-10-01T14:00:00+08:00'))).fires);
  // 从没跑过 ⇒ 立刻跑（首次启用）
  record('H34_never_ran_fires_immediately', 1,
-   autoTick({ auto: true, autoTime: '23:30', busy: false }, AT('2026-10-01T09:00:00+08:00')));
+   (await autoTick({ auto: true, autoTime: '23:30', busy: false }, AT('2026-10-01T09:00:00+08:00'))).fires);
+ // A108（2026-11-21 用户："闪退刚启动聊天摘要就启动了"）：**刚挂载的 15 分钟内不补欠账**。
+ //   实测：2026-11-21 20:55:48 宿主启动、20:56:40 就发了一整轮。挂载时间用 Date.now() 的"刚才"来模拟。
+ record('H65_startup_grace_blocks_missed_round_catchup', 0,
+   (await autoTick({ auto: true, autoTime: '23:30', busy: false, autoLastOkAt: 0, mountedAt: Date.now() - 60 * 1000 },
+     Date.now())).fires);
+ // 过了宽限期，欠账照跑（不能因为加了宽限就永远不补）
+ record('H66_missed_round_fires_after_grace', 1,
+   (await autoTick({ auto: true, autoTime: '23:30', busy: false, autoLastOkAt: 0, mountedAt: Date.now() - 20 * 60 * 1000 },
+     Date.now())).fires);
+ record('H69_first_state_write_denial_stops_auto', 0,
+   (await autoTick({auto: true, autoTime: '23:30'}, AT('2026-11-23T23:30:00+08:00'),
+     {persist: 'save-fail'})).fires);
+ // A111（2026-11-23）：**落盘被拒时，已挂着的 pendingCollect 也不许补跑**。
+ //   旧顺序先判 pending 再判 saveBlocked，于是"写不进去"的那一晚照样把一整轮排上去。
+ record('H67_save_blocked_stops_pending_resume', 0,
+   (await autoTick({ auto: false, busy: false, saveBlocked: true, sessionId: 'session-x', mountedAt: Date.now() - 20 * 60 * 1000,
+              pendingCollect: { day: '2026-11-21', at: Date.now() - 11 * 60 * 1000, resumes: 0, sessionId: 'session-x' } },
+     Date.now())).fires);
+}
+{
+ // A112（2026-11-23）：借会话策略的三条硬边界 —— 只借"cwd 就是私人根"的真实 Session；
+ //   cwd 不匹配或会话不存在时用部署默认；会话只读策略原样下传。
+ const src = (() => {
+   const a = body.indexOf('const privatePolicy = () => {');
+   return body.slice(a, body.indexOf('const saveState = async () => {', a));
+ })();
+ const mk = (S, sessions, resolved) => new Function('S', 'ctx', 'STATE_DIR', src + 'return privatePolicy;')(
+   S, { get: (n) => (n === 'sessions' ? sessions : (n === 'sandboxPolicy' ? { resolve: () => resolved } : undefined)) },
+   'R:\\fixture-private');
+ const okSession = { header: { cwd: 'R:\\fixture-private' } };
+ const wrongCwd = { header: { cwd: 'X:\\ExampleWorkspace\\other' } };
+ const pol = { mode: 'workspace-write', writableRoots: ['R:\\fixture-private'] };
+ record('H68_policy_bound_only_to_the_matching_session',
+   { matched: true, wrongCwd: false, missing: false, readOnly: true },
+   { matched: !!mk({ sessionId: 's1' }, { get: () => okSession }, pol)(),
+     wrongCwd: !!mk({ sessionId: 's1' }, { get: () => wrongCwd }, pol)(),
+     missing: !!mk({ sessionId: 's1' }, { get: () => undefined }, pol)(),
+     readOnly: !!mk({ sessionId: 's1' }, { get: () => okSession }, { mode: 'read-only' })() });
 }
 {
  // A21（2026-09-22）：**未交付的轮要能自动补跑**。实测 2026-09-21 23:30 那轮请求过但没交付
  //   （提问没人回答 → turn 被 interrupted），`pendingCollect` 一直挂着却**没有任何东西把它接上**。
  //   `auto:false` 也要补 —— 它是"把已请求的那一轮做完"，不是"新起一轮"。
- const S = { auto: false, autoTime: '23:30', busy: false, autoFiredDay: '2026-09-21', resumeCount: 0,
-             pendingCollect: { day: '2026-09-21', at: Date.now() - 11 * 60 * 1000 } };
- record('H12_undelivered_round_resumes', 1, autoTick(S, AT('2026-09-22T10:30:00+08:00')));
- // 上限 3 次：已经补过 3 次就不再补（避免无限重试）
- record('H13_resume_capped_at_3', 0, autoTick({ auto: false, busy: false, resumeCount: 3, autoFiredDay: '2026-09-21',
-             pendingCollect: { day: '2026-09-21', at: Date.now() - 11 * 60 * 1000 } }, AT('2026-09-22T10:30:00+08:00')));
+ const S = { auto: false, autoTime: '23:30', busy: false, autoFiredDay: '2026-09-21', resumeCount: 0, sessionId: 'session-x',
+             pendingCollect: { day: '2026-09-21', at: Date.now() - 11 * 60 * 1000, resumes: 0, sessionId: 'session-x' } };
+ const t12 = await autoTick(S, AT('2026-09-22T10:30:00+08:00'), { awaitTick: true, turnState: { open: false, ends: 1, lastReason: 'interrupted', ask: null } });
+ record('H12_undelivered_round_resumes', 1, t12.fires);
+ // A105（2026-11-16 用户报「一天发两次同样的提示词」）：**会话还有没结束的回合时绝不补跑**。
+ //   实测 2026-11-15：第一轮 23:30:02 发车、回合 23:45:04 才结束，可 23:40:32 补跑就发出去了。
+ {
+   const S2 = { auto: false, autoTime: '23:30', busy: false, autoFiredDay: '2026-09-21', resumeCount: 0, sessionId: 'session-x',
+                pendingCollect: { day: '2026-09-21', at: Date.now() - 11 * 60 * 1000, resumes: 0, sessionId: 'session-x' } };
+   const t = await autoTick(S2, AT('2026-09-22T10:30:00+08:00'), { awaitTick: true, turnState: { open: true, ends: 0, lastReason: '', ask: null } });
+   record('H63_resume_skipped_while_turn_still_open', 0, t.fires);
+ }
+ // 读不到会话（控制器缺失）⇒ 也不补跑：宁可晚一轮，也不凭空再发一份提示词
+ {
+   const S3 = { auto: false, autoTime: '23:30', busy: false, autoFiredDay: '2026-09-21', resumeCount: 0,
+                pendingCollect: { day: '2026-09-21', at: Date.now() - 11 * 60 * 1000, resumes: 0 } };
+   const t = await autoTick(S3, AT('2026-09-22T10:30:00+08:00'), { awaitTick: true, noSessionController: true });
+   record('H64_resume_skipped_without_session_controller', 0, t.fires);
+ }
+ // 同一轮只补一次（补过就不再补，避免一天两次同样的东西）
+ record('H13_resume_capped_at_one_per_round', 0, (await autoTick({ auto: false, busy: false, resumeCount: 3, autoFiredDay: '2026-09-21',
+             pendingCollect: { day: '2026-09-21', at: Date.now() - 11 * 60 * 1000, resumes: 1 } }, AT('2026-09-22T10:30:00+08:00'))).fires);
  // 刚触发不到 10 分钟 ⇒ 不补（否则会和正常那一轮打架）
- record('H14_resume_waits_10min', 0, autoTick({ auto: false, busy: false, resumeCount: 0, autoFiredDay: '2026-09-21',
-             pendingCollect: { day: '2026-09-22', at: Date.now() - 60 * 1000 } }, AT('2026-09-22T10:30:00+08:00')));
+ record('H14_resume_waits_10min', 0, (await autoTick({ auto: false, busy: false, resumeCount: 0, autoFiredDay: '2026-09-21',
+             pendingCollect: { day: '2026-09-22', at: Date.now() - 60 * 1000 } }, AT('2026-09-22T10:30:00+08:00'))).fires);
 }
 {
  // A22（2026-09-22）：**读出"主 agent 正在等你回答的提问"**。
@@ -229,7 +288,7 @@ function loadStateWith(S, files, stateFile, stateOld, saveCalls) {
   const wrote = {};
   const fsSvc = {
     resolve: async (x) => x,
-    readText: async (p) => { if (p in files) return files[p]; throw new Error('ENOENT') },
+    readText: async (p) => { if (p in files) return files[p]; throw Object.assign(new Error('Missing synthetic file'), { code: 'FS_NOT_FOUND' }) },
     writeText: async (p, c) => { wrote[p] = c; files[p] = c },
   };
   const args = ['S', 'fsSvc', 'STATE_FILE', 'STATE_OLD', 'saveState'];
@@ -253,12 +312,12 @@ function loadStateWith(S, files, stateFile, stateOld, saveCalls) {
           quarantinedKeepsRaw: Object.keys(h.wrote).some((k) => k.indexOf('memory.corrupt-') === 0 && h.wrote[k] === files.memory) });
 }
 {
- // 损坏件 + 没有 .bak ⇒ 返回 'none'（**不抛**），"不存在"与"损坏"必须分得开
+ // 损坏件 + 没有 .bak ⇒ 阻止无状态采集，"不存在"与"损坏"必须分得开
  const files = { memory: '{broken' };
  const saveCalls = [];
  const S = { items: [] };
  const h = loadStateWith(S, files, 'memory', 'C:\\old\\state.json', saveCalls);
- record('H19_corrupt_without_bak_returns_none', 'none', await h.load());
+ record('H19_corrupt_without_bak_blocks_reads', 'read-fail', await h.load());
 }
 {
  // 新位置没有、旧 Temp 路径有 ⇒ 迁移读取 + **立刻调 saveState 落盘到新位置**
@@ -383,12 +442,13 @@ function loadStateWith(S, files, stateFile, stateOld, saveCalls) {
   const mk = async (trusted) => {
     const S = { sessionId: 'session-OLD', sessParatera: 'session-OLD', sessThu: '', busy: false };
     const fn = new Function('S', 'ensureRouteSession', 'createRouteSession', 'retireCwdStale',
-      'cwdTrust', 'routeSlotKey', 'saveState', 'ROUTE_MODELS', 'noteRouteModel', src);
+      'cwdTrust', 'routeSlotKey', 'saveState', 'ROUTE_MODELS', 'noteRouteModel', 'ctx', src);
     const pick = fn(S, async (r, s) => { s.push('slot:reused:session-OLD'); return 'session-OLD' },
       async (r, s) => { s.push('created:session-NEW'); return 'session-NEW' },
       async () => 0, () => trusted, () => 'sessParatera', async () => 'saved',
-      { paratera: { provider: 'p', model: 'm' }, thu: { provider: 'p', model: 'm' } },
-      async () => ({ ok: true, selected: { provider: 'p', model: 'm' } }));
+      { paratera: { provider: 'p', model: 'm', effort: 'high' }, thu: { provider: 'p', model: 'm', effort: 'high' } },
+      async () => ({ ok: true, selected: { provider: 'p', model: 'm' } }),
+      { get: () => ({}) });
     const r = await pick('paratera', 'probe:paratera 可达');
     return { r: r, S: S };
   };
@@ -410,11 +470,12 @@ function loadStateWith(S, files, stateFile, stateOld, saveCalls) {
 async function autoTickState(S, nowMs, triggerImpl) {
   let captured = null;
   const timerSvc = { interval: (cb) => { captured = cb; return null; } };
-  const fn = new Function('timerSvc', 'S', 'checkBusy', 'checkCtx', 'cstDay', 'cstHM', 'prevDayOf', 'saveState', 'triggerRound', 'noteError',
-    chunk('const offTick = timerSvc.interval(() => {', '}, 30000);') + '}, 30000); return offTick;');
+  const fn = new Function('timerSvc', 'S', 'checkBusy', 'checkCtx', 'cstDay', 'cstHM', 'prevDayOf', 'saveState', 'triggerRound', 'noteError', 'ctx', 'turnState',
+    chunk('const offTick = timerSvc.interval(async () => {', '}, 30000);') + '}, 30000); return offTick;');
   fn(timerSvc, S, async () => {}, async () => {}, (ms) => CST_AT(nowMs)(ms).toISOString().slice(0, 10),
-    (ms) => CST_AT(nowMs)(ms).toISOString().slice(11, 16), prevDayOf, async () => {}, triggerImpl, () => {});
-  captured();
+    (ms) => CST_AT(nowMs)(ms).toISOString().slice(11, 16), prevDayOf, async () => 'saved', triggerImpl, () => {},
+    { get: () => ({}) }, async () => ({ open: false, ends: 0, lastReason: '', ask: null }));
+  await captured();
   await new Promise((r) => setTimeout(r, 0));    // 让 then/catch 跑完
   return S;
 }
@@ -457,6 +518,30 @@ async function autoTickState(S, nowMs, triggerImpl) {
     () => { n5 += 1; return { ok: true } });
   record('H32_retry_counter_resets_on_next_boundary', 1, n5);
 }
+
+// Exercise the production opener without launching an application or using host services.
+{
+  const openerSource = body.slice(body.indexOf('const spawnOpen = async (abs) => {'), body.indexOf("routeOk.open = route("));
+  const makeOpen = new Function('ctx', 'ENV', openerSource + 'return spawnOpen;');
+  const cases = [
+    { id: 'H41_open_host_resolver', resolver: async () => 'R:/system/cmd.exe', env: { ComSpec: 'S:/system/cmd.exe' }, file: 'R:/folder with space/中文/file.txt', exe: 'R:/system/cmd.exe', cwd: 'R:/folder with space/中文' },
+    { id: 'H42_open_comspec', env: { ComSpec: 'S:/system/cmd.exe' }, file: 'R:/folder/file.txt', exe: 'S:/system/cmd.exe', cwd: 'R:/folder' },
+    { id: 'H43_open_resolver_failure_fallback', resolver: async () => { throw new Error('synthetic'); }, env: { ComSpec: 'S:/system/cmd.exe' }, file: 'R:/folder/file.txt', exe: 'S:/system/cmd.exe', cwd: 'R:/folder' },
+    { id: 'H44_open_root_file_has_absolute_cwd', env: { ComSpec: 'S:/system/cmd.exe' }, file: 'R:/file.txt', exe: 'S:/system/cmd.exe', cwd: path.win32.normalize('R:/') },
+    { id: 'H45_open_missing_command_fails_closed', env: {}, file: 'R:/file.txt', fails: true },
+    { id: 'H46_open_non_string_resolver_falls_back', resolver: async () => ({ unexpected: true }), env: { ComSpec: 'S:/system/cmd.exe' }, file: 'R:/folder/file.txt', exe: 'S:/system/cmd.exe', cwd: 'R:/folder' },
+  ];
+  for (const c of cases) {
+    const calls = [];
+    const sp = { spawn: (request) => { calls.push(request); return { done: Promise.resolve() }; } };
+    if (c.resolver) sp.resolveExecutable = c.resolver;
+    const open = makeOpen({ get: () => sp }, c.env);
+    const response = await open(c.file);
+    const ok = c.fails ? response.ok === false && calls.length === 0 : response.ok === true && calls.length === 1 && calls[0].argv[0] === c.exe && calls[0].argv[4] === c.file && calls[0].cwd === c.cwd;
+    record(c.id, true, ok);
+  }
+}
+
 const failures = results.filter((r) => !r.pass)
 console.log(JSON.stringify({ total: results.length, passed: results.length - failures.length, failures }, null, 2))
 if (failures.length) process.exitCode = 1
