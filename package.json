@@ -1,6 +1,6 @@
 {
   "name": "dsh-chat-digest",
-  "version": "1.5.3",
+  "version": "1.5.4",
   "description": "Turn chat logs into a panel list maintained by a resident agent. Includes a zero npm-dependency core and an optional WeChat/QQ ingestion pipeline. Installs as a DSH profile bundle.",
   "type": "module",
   "main": "lib/plugin.js",
@@ -80,7 +80,6 @@
     "agent/tools/local_extract_probe.py",
     "agent/tools/local_full_probe.py",
     "agent/tools/local_prepass.py",
-    "agent/tools/make_handoff.py",
     "agent/tools/media_ledger.py",
     "agent/tools/mem_audit.py",
     "agent/tools/near_dup.py",

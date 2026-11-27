@@ -30,11 +30,8 @@ function record(id, expected, actual){results.push({id,expected,actual,pass:JSON
    async()=> 'saved',async()=>{},()=>'',()=>{},{},()=> 'thu',()=>({ok:true}));
  await check();record('H01_error_auto_retry',1,prompts);
 }
-// A102（2026-10-01，另一会话在 madmodel 侧定案）：**流式截断签名**（`Unterminated string in JSON` /
-//   `Unexpected end of JSON input`）＝ 服务端把长工具调用参数的事件体劈成两帧，间歇发作。
-//   现场：本会话 17:13:30–17:32:54 **6 连败全是这个签名**（`rpcId: retry-*` 说明是插件在续跑），
-//   17:35 自己就过了；而老代码**没有退避**（间隔 3s–4min）、也不认签名。
-//   下面五条把新行为钉住：认签名并落盘 / 退避 60 秒 / 退避窗口内不打扰 / 试满换线路 / 普通错误维持老行为。
+// Exercise stream truncation detection, persistence, backoff and halt behavior.
+// Ordinary failures continue to follow the normal retry policy.
 async function busyProbe(S, turnStateImpl) {
   const prompts = [], triggers = [];
   const src = chunk('const checkBusy = async () => {', '// 自动：') + 'return checkBusy;';
@@ -220,7 +217,7 @@ const AT = (iso) => Date.parse(iso);
    S, { get: (n) => (n === 'sessions' ? sessions : (n === 'sandboxPolicy' ? { resolve: () => resolved } : undefined)) },
    'R:\\fixture-private');
  const okSession = { header: { cwd: 'R:\\fixture-private' } };
- const wrongCwd = { header: { cwd: 'X:\\ExampleWorkspace\\other' } };
+ const wrongCwd = { header: { cwd: 'Z:/unrelated-digest-test-fixture' } };
  const pol = { mode: 'workspace-write', writableRoots: ['R:\\fixture-private'] };
  record('H68_policy_bound_only_to_the_matching_session',
    { matched: true, wrongCwd: false, missing: false, readOnly: true },
@@ -438,22 +435,38 @@ function loadStateWith(S, files, stateFile, stateOld, saveCalls) {
 //   探针文件写进了包里。判据取舍：判死可以 fail-open（A29 的教训），**派发必须 fail-closed**，
 //   而且**不许依赖元数据**（元数据读不到就放行 —— 那正是这次的洞）⇒ 只认"亲手建过的会话"。
 {
-  const src = chunk('const pickRoute = async (route, why) => {', '// 插件侧连通性探测') + 'return pickRoute;';
-  const mk = async (trusted) => {
-    const S = { sessionId: 'session-OLD', sessParatera: 'session-OLD', sessThu: '', busy: false };
+  const src = chunk('const pickRoute = async (route, why, switchModel = false) => {', '// 插件侧连通性探测') + 'return pickRoute;';
+  const mk = async (trusted, options = {}) => {
+    const S = { sessionId: 'session-OLD', sessParatera: 'session-OLD', sessThu: '', busy: !!options.busy };
+    let switches = 0;
+    const keepExisting = chunk('const ensureRouteSession = async (route, steps) => {', 'const pickRoute = async')
+      + 'return ensureRouteSession;';
+    const lookup = new Function('S','ctx','routeSlotKey','liveOk','noteRouteModel',keepExisting)(
+      S, { get: () => ({}) }, () => 'sessParatera', async () => true,
+      async () => { switches++; return {ok:true, selected:{provider:'p',model:'m'}}; });
+
     const fn = new Function('S', 'ensureRouteSession', 'createRouteSession', 'retireCwdStale',
       'cwdTrust', 'routeSlotKey', 'saveState', 'ROUTE_MODELS', 'noteRouteModel', 'ctx', src);
-    const pick = fn(S, async (r, s) => { s.push('slot:reused:session-OLD'); return 'session-OLD' },
+    const pick = fn(S, lookup,
       async (r, s) => { s.push('created:session-NEW'); return 'session-NEW' },
       async () => 0, () => trusted, () => 'sessParatera', async () => 'saved',
       { paratera: { provider: 'p', model: 'm', effort: 'high' }, thu: { provider: 'p', model: 'm', effort: 'high' } },
-      async () => ({ ok: true, selected: { provider: 'p', model: 'm' } }),
+      async () => {
+        switches++;
+        return options.rejectSwitch ? {ok:false} : {ok:true, selected:{provider:'p', model:'m'}};
+      },
       { get: () => ({}) });
-    const r = await pick('paratera', 'probe:paratera 可达');
-    return { r: r, S: S };
+    const r = await pick('paratera', 'fixture', !!options.explicit);
+    return { r, S, switches };
   };
   const bad = await mk(false);
   const good = await mk(true);
+  const explicit = await mk(true, { explicit:true });
+  const busy = await mk(true, { explicit:true, busy:true });
+  const rejected = await mk(true, { explicit:true, rejectSwitch:true });
+  record('H70_model_changes_only_for_an_explicit_successful_route_request',
+    { usual:0, explicit:1, busy:0, refused:false },
+    { usual:good.switches, explicit:explicit.switches, busy:busy.switches, refused:rejected.r.ok });
   record('H26_untrusted_dispatch_retargeted',
          { retargeted: true, ok: true, sid: 'session-NEW', slot: 'session-NEW', step: true,
            trustedNoRetarget: false, trustedKeepsId: 'session-OLD' },
@@ -540,6 +553,153 @@ async function autoTickState(S, nowMs, triggerImpl) {
     const ok = c.fails ? response.ok === false && calls.length === 0 : response.ok === true && calls.length === 1 && calls[0].argv[0] === c.exe && calls[0].argv[4] === c.file && calls[0].cwd === c.cwd;
     record(c.id, true, ok);
   }
+}
+
+// A114/A115（2026-11-26 冷启动恢复）：三条最小覆盖 + 两个边界。
+//   切出 `let privRestoreInFlight … let stateWriteTail` 这段（含 privateIdentityCheck 与 ensurePrivateSession），
+//   用假 ctx 喂真实的身份核验与恢复流程。
+{
+  const src = (() => {
+    const a = body.indexOf('let privRestoreInFlight');
+    const b = body.indexOf('let stateWriteTail');
+    if (a < 0 || b < 0) throw Error('A114 slice missing');
+    return body.slice(a, b);
+  })();
+  const PRIV = 'R:\\fixture-private';
+  const normPath = (p) => String(p || '').replace(/[\\/]+$/, '').replace(/\//g, '\\').toLowerCase();
+  const mk = (opts) => {
+    const o = opts || {};
+    const calls = { list: 0, resolve: 0, prompt: 0, selectModel: 0 };
+    const S = { sessionId: o.sid === undefined ? 'session-aaaa' : o.sid };
+    const store = new Map();
+    const sc = {
+      list: async () => { calls.list += 1; return { items: o.items || [] } },
+      resolveAgent: async () => {
+        calls.resolve += 1;
+        if (o.resolveThrows) throw new Error('resume failed');
+        if (o.resolveError) return { error: { code: 'session/not-found' } };
+        if (o.liveAfter !== false) store.set(S.sessionId, { header: { id: S.sessionId, cwd: o.liveCwd || PRIV } });
+        return { agent: {} };
+      },
+      prompt: async () => { calls.prompt += 1; return {} },
+      selectModel: async () => { calls.selectModel += 1; return { selected: {} } },
+    };
+    const reg = o.arch === undefined ? { archivedSessionIds: [] } : (o.arch === null ? {} : { archivedSessionIds: o.arch });
+    const ctx = {
+      get: (n) => (n === 'sessionController' ? sc
+        : n === 'sessions' ? { get: (id) => store.get(id) }
+          : n === 'sandboxPolicy' ? { resolve: () => (o.pol === undefined ? { mode: 'workspace-write' } : o.pol) }
+            : n === 'workspaceRegistry' ? reg
+              : n === 'workspaceController' ? {}
+                : n === 'fs' ? {} : undefined),
+    };
+    const fn = new Function('S', 'ctx', 'STATE_DIR', 'sessionMeta', 'FAKE_SIGNAL', 'race', 'privatePolicy',
+      src + '; return { ensurePrivateSession, privateIdentityCheck };');
+    const api = fn(S, ctx, PRIV,
+      async () => ({ cwd: o.metaCwd === undefined ? PRIV : o.metaCwd }),
+      {}, async (p) => p,
+      () => (calls.resolve > 0 ? (o.polAfter === undefined ? { mode: 'workspace-write' } : o.polAfter) : null));
+    return { api: api, calls: calls, S: S };
+  };
+  const goodItems = [{ sessionId: 'session-aaaa', cwd: PRIV }];
+
+  // ① 冷启动：没有 live Session ⇒ 恢复一次，且恢复后拿到策略
+  const a = mk({ items: goodItems });
+  const ra = await a.api.ensurePrivateSession();
+  record('H71_cold_start_restores_once_with_policy',
+    { ok: true, restored: true, resolve: 1, prompt: 0, selectModel: 0 },
+    { ok: !!(ra && ra.ok), restored: !!(ra && ra.restored), resolve: a.calls.resolve,
+      prompt: a.calls.prompt, selectModel: a.calls.selectModel });
+
+  // ② 身份不符（cwd 不是私人根）⇒ 绝不恢复
+  const b = mk({ items: [{ sessionId: 'session-aaaa', cwd: 'X:\\ExampleWorkspace\\other' }] });
+  const rb = await b.api.ensurePrivateSession();
+  record('H72_wrong_identity_never_restores', { ok: false, resolve: 0 },
+    { ok: !!(rb && rb.ok), resolve: b.calls.resolve });
+
+  // ③ 归档表读不到（不是数组）⇒ 不恢复（旧版"读不到就放行"是洞）
+  const c = mk({ items: goodItems, arch: null });
+  const rc = await c.api.ensurePrivateSession();
+  record('H73_unreadable_archive_blocks_restore', { ok: false, resolve: 0 },
+    { ok: !!(rc && rc.ok), resolve: c.calls.resolve });
+
+  // ④ 已归档 / 子 agent 会话 / 冲突的持久投影 ⇒ 都不恢复
+  const d1 = mk({ items: goodItems, arch: ['session-aaaa'] });
+  const d2 = mk({ items: [{ sessionId: 'session-aaaa', cwd: PRIV, origin: 'subagent' }] });
+  const d3 = mk({ items: goodItems, metaCwd:'R:\\different' });
+  record('H74_archived_subagent_or_conflicting_projection_blocks_restore',
+    { archived: false, subagent: false, brokenProj: false },
+    { archived: !!(await d1.api.ensurePrivateSession()).ok,
+      subagent: !!(await d2.api.ensurePrivateSession()).ok,
+      brokenProj: !!(await d3.api.ensurePrivateSession()).ok });
+
+  // ⑤ 单飞：并发两次只恢复一次；空 sid 不消耗那一次机会
+  const e = mk({ items: goodItems });
+  const both = await Promise.all([e.api.ensurePrivateSession(), e.api.ensurePrivateSession()]);
+  const f = mk({ sid: '', items: goodItems });
+  const r1 = await f.api.ensurePrivateSession();
+  f.S.sessionId = 'session-aaaa';
+  const r2 = await f.api.ensurePrivateSession();
+  record('H75_single_flight_and_unverified_sid_keeps_the_chance',
+    { resolve: 1, bothOk:true, firstOk: false, secondResolve: 1 },
+    { resolve: e.calls.resolve, bothOk:both.every(r=>r.ok), firstOk: !!(r1 && r1.ok), secondResolve: f.calls.resolve });
+}
+
+// A115（2026-11-26 复审缺口 3）：**先按现有策略写**，只有真的被沙箱拒绝、且没有 live 策略时，
+//   才恢复一次并重试同一份快照。绝不能一拿不到策略就抛（那会打断"部署默认本来能写"的首次安装）。
+{
+  const src = (() => {
+    const a = body.indexOf('let pol = privatePolicy();');
+    const b = body.indexOf('lastSavedText = text;', a);
+    if (a < 0 || b < 0) throw Error('A115 write slice missing');
+    return body.slice(a, b);
+  })();
+  const run = async (opts) => {
+    const o = opts || {};
+    const writes = [];
+    let restores = 0;
+    const denied = () => {
+      const e = new Error('cannot write "x": file access denied under workspace-write mode');
+      e.code = 'FS_SANDBOX_DENIED';
+      return e;
+    };
+    const fsSvc = {
+      resolve: async (p) => ({ displayPath: p }),
+      writeText: async (target, content, a, b, pol) => {
+        const isBak = /\.bak$/.test(String(target && target.displayPath));
+        if (!isBak) writes.push(pol === undefined ? null : pol);   // 只数主文件写入
+        if (o.denyFirst && writes.length === 1) throw denied();
+        if (o.denyAlways) throw denied();
+        return undefined;
+      },
+    };
+    const S = {};
+    const privatePolicy = () => (o.livePolicy || null);
+    const ensurePrivateSession = async () => {
+      restores += 1;
+      if (o.restoreOk) o.livePolicy = { mode: 'workspace-write' };
+      return o.restoreOk ? { ok: true, restored: true } : { ok: false, why: 'identity unknown' };
+    };
+    const fn = new Function('S', 'privatePolicy', 'ensurePrivateSession', 'fsSvc', 'STATE_FILE', 'text', 'prev', 'Date',
+      'return (async () => {' + src + '; return "ok"; })();');
+    let err = '';
+    try { await fn(S, privatePolicy, ensurePrivateSession, fsSvc, 'R:\\state.json', 'BODY', 'PREV', Date) }
+    catch (e) { err = String(e && e.message) }
+    return { writes: writes, restores: restores, err: err };
+  };
+
+  // ① 部署默认能写 ⇒ 一次写成，不恢复
+  const a = await run({});
+  // ② 被拒 + 恢复成功 ⇒ 第二次带策略重试同一份快照
+  const b = await run({ denyFirst: true, restoreOk: true });
+  // ③ 被拒 + 身份不可验 ⇒ 不重试，明确失败（保持停派发）
+  const c = await run({ denyFirst: true, restoreOk: false });
+
+  record('H76_default_policy_written_first_then_restore_on_denial',
+    { plain: 1, plainRestore: 0, denied: 2, deniedRestore: 1, failedRestore: 1, failedErr: true },
+    { plain: a.writes.length, plainRestore: a.restores,
+      denied: b.writes.length, deniedRestore: b.restores,
+      failedRestore: c.restores, failedErr: /未能恢复可用策略/.test(c.err) });
 }
 
 const failures = results.filter((r) => !r.pass)

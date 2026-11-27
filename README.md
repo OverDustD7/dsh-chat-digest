@@ -15,8 +15,7 @@ knowing, and keeps one resident DSH agent session reading the chats and rewritin
 - Status: maintained.
 - Supported: the DSH web UI on Windows x64, DSH `>= 0.1.5-rc.1`, Node `>= 22.5`.
 - Other platforms: CI is configured for core probes on Windows and Linux; live Linux and macOS host workflows are unverified. No standalone hosted service or mobile client is provided.
-- Current version: **1.5.3**, which is what `dsh plugin add` installs once the release is published. The
-  published package is **1.5.3**: install it with `dsh plugin --profile web add dsh-chat-digest@1.5.3` and verify with `npm view dsh-chat-digest version`.
+- This release is **1.5.4**.
 
 The panel, one resident main-agent session (switching route switches the model on that same session), and
 belong to the plugin. On a schedule, or when you click **Fetch**, the session reads your chats, picks out
@@ -39,7 +38,7 @@ from a private inbox or over HTTP instead.
 ## Installation
 
 ```sh
-dsh plugin --profile web add dsh-chat-digest
+dsh plugin --profile web add dsh-chat-digest@1.5.4
 ```
 
 `web` is the profile behind the DSH web UI — substitute your own profile name if you renamed it. Installing
@@ -209,7 +208,7 @@ the old locations (`%LOCALAPPDATA%\chat-feed\`, an older temp directory, `%TEMP%
 those once as migration sources and leaves them in place; `state.note` records which one was used.
 
 If you are upgrading a locally assembled 1.5.2 build, keep a private backup of the original package,
-profile configuration and data. Before restarting on 1.5.3, set `pythonRuntime: legacy` in the plugin
+profile configuration and data. Before restarting on this release, set `pythonRuntime: legacy` in the plugin
 configuration, or remove the mode override. If you use chat import, configure the external tools below
 before updating. Keep `localDir` and `stateDir` pointed at the same private locations as before.
 
@@ -229,6 +228,13 @@ Then restart. Remove `{{DSH_HOME}}\dsh-chat-digest\` as a separate manual step i
 gone — it is deliberately not automatic, because that directory is the only copy.
 
 ## Limitations and troubleshooting
+
+After a host restart, if a state write is denied and the saved resident session is unloaded, the
+plugin checks the session's identity and can restore it once to retry the write under its existing
+DSH policy. If the write is still denied, automatic collection stays paused. Automatic collection
+keeps the model currently selected in DSH. Explicitly choosing a named route or model can change
+that selection.
+
 
 The panel, the items API and the inbox workflow run with the host's Node.js. For the optional
 WeChat/QQ pipeline, set up an external Python environment and install the dependencies listed in

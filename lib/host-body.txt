@@ -320,6 +320,98 @@ return {
           return pol;
         } catch (e) { return null }
       };
+      // A114（2026-11-26 冷启动修复）：宿主重启后插件那条会话**没被加载**，`sessions.get()` 拿不到
+      //   真实 Session ⇒ `privatePolicy()` 返回 null ⇒ 退回部署默认策略 ⇒ 写私人根必被拒。
+      //   实测：宿主 11-26 11:35 启动，state.json/.bak 的 mtime 停在 11-24 23:48，之后再没写成功过。
+      //   官方接口 `SessionController.resolveAgent` 文档写明是 **resolve/resume 真实 Agent**（不是只读查询），
+      //   所以只在"确实要写状态、且身份可核验"时调用一次：
+      //     · 会话 id 只能来自**已验证的状态文件**（`S.sessionId`，由 loadState 从 state.json 还原）；
+      //     · 先用**非激活的可信持久投影**（会话记录文件 + 归档表）核验：存在、未归档、cwd 严格等于私人根；
+      //     · 恢复后**再用 sessions.get + 原生 sandboxPolicy.resolve 复核**，通过了才写；
+      //     · 全程不发 prompt、不建会话、不切模型、不自造策略；失败就保持停派发并把原因写进诊断字段。
+      //   单飞 + 每个进程只试一次：不每个 tick 无条件重试。
+      let privRestoreInFlight = null;          // { sid, promise } —— 单飞
+      const privRestoreDone = new Set();       // 已为哪些**精确 sid** 尝试过（每进程一次）
+      const normPath = (p) => String(p || '').replace(/[\\/]+$/, '').replace(/\//g, '\\').toLowerCase();
+      const privateIdentityCheck = async () => {
+        const sid = String(S.sessionId || '');
+        if (!/^session-[A-Za-z0-9-]+$/.test(sid)) return { ok: false, why: '状态文件里没有可信的会话 id' };
+        // ① 归档必须**正向确认**：归档服务读不到、或结果不是数组 ⇒ 一律不恢复（旧版"读不到就放行"是洞）。
+        const reg = ctx.get('workspaceRegistry') || ctx.workspaceRegistry;
+        const archIds = (reg && reg.archivedSessionIds) ? reg.archivedSessionIds : null;
+        if (!Array.isArray(archIds)) return { ok: false, why: '归档表读不到，无法确认会话未归档' };
+        if (archIds.map(String).indexOf(sid) >= 0) return { ok: false, why: '会话已归档' };
+        // ② 用 SessionController.list 的冷投影做**精确 id + cwd + origin** 核验（不激活会话）。
+        const sc0 = ctx.get('sessionController');
+        if (!sc0 || typeof sc0.list !== 'function') return { ok: false, why: '没有 sessionController.list，无法核验会话身份' };
+        let items = null;
+        try { items = await race(sc0.list({}, FAKE_SIGNAL), 2500); } catch (e) { items = null }
+        if (!items || !Array.isArray(items.items)) return { ok: false, why: '会话列表读不到，无法核验身份' };
+        const hit = items.items.find((x) => String(x && x.sessionId) === sid);
+        if (!hit) return { ok: false, why: '会话列表里没有这条会话' };
+        if (hit.running === true || hit.formatStatus === 'migration-required') return { ok: false, why: '会话仍在运行或需要迁移' };
+        if (hit.origin === 'subagent' || hit.parentSessionId) return { ok: false, why: '这条会话是子 agent 会话，不恢复' };
+        if (normPath(hit.cwd) !== normPath(STATE_DIR)) return { ok: false, why: '会话 cwd 不是私人物理根' };
+        // ③ 持久投影（会话记录文件）做第三重交叉核验
+        const fs2 = ctx.get('fs');
+        if (fs2) {
+          const meta = await sessionMeta(fs2, sid);
+          if (meta && normPath(meta.cwd) !== normPath(STATE_DIR)) return { ok: false, why: '会话记录里的 cwd 不是私人物理根' };
+        }
+        return { ok: true, sid: sid };
+      };
+      const ensurePrivateSession = async () => {
+        if (privatePolicy()) return { ok: true, already: true };
+        const sid = String(S.sessionId || '');
+        // A115（2026-11-26 复审）：**没有可信 sid 就不消耗那一次机会**，也不进入单飞。
+        if (!/^session-[A-Za-z0-9-]+$/.test(sid)) return { ok: false, why: '没有可信的会话 id（不尝试恢复）' };
+        // 只有"已经为这条精确 sid 尝试过"才拒绝；并发的第二次调用**加入同一次单飞**而不是提前判死。
+        if (privRestoreInFlight) {
+          return privRestoreInFlight.sid === sid ? privRestoreInFlight.promise
+            : { ok: false, why: '另一条会话正在恢复' };
+        }
+        if (privRestoreDone.has(sid)) return { ok: false, why: String(S.privRestoreErr || '本进程已尝试过恢复这条会话') };
+        const promise = (async () => {
+          const v = await privateIdentityCheck();
+          if (!v.ok) { S.privRestoreAt = Date.now(); S.privRestoreErr = v.why; return v }   // 身份不可验 ⇒ 不记入 done
+          if (String(S.sessionId || '') !== sid) return { ok: false, why: '恢复过程中会话 id 变了' };
+          privRestoreDone.add(sid);                                                          // 只对已验证的精确 sid 记一次
+          const reg = ctx.get('workspaceRegistry') || ctx.workspaceRegistry;
+          if (!Array.isArray(reg && reg.archivedSessionIds) || reg.archivedSessionIds.includes(sid)) {
+            return { ok: false, why: '恢复前无法确认会话未归档' };
+          }
+          const sc = ctx.get('sessionController');
+          if (!sc || typeof sc.resolveAgent !== 'function') {
+            S.privRestoreAt = Date.now(); S.privRestoreErr = '没有 sessionController.resolveAgent';
+            return { ok: false, why: S.privRestoreErr };
+          }
+          try {
+            const r = await sc.resolveAgent(v.sid);
+            if (r && r.error) {
+              S.privRestoreAt = Date.now();
+              S.privRestoreErr = 'resolveAgent 失败：' + String((r.error && (r.error.code || r.error.name)) || 'unknown');
+              return { ok: false, why: S.privRestoreErr };
+            }
+          } catch (e) {
+            S.privRestoreAt = Date.now();
+            S.privRestoreErr = 'resolveAgent 抛错：' + String((e && (e.code || e.name)) || 'unknown').slice(0, 120);
+            return { ok: false, why: S.privRestoreErr };
+          }
+          // 恢复后再严格复核一次（不信任中间态）
+          const sessions = ctx.get('sessions'), sp = ctx.get('sandboxPolicy');
+          const sess = (sessions && typeof sessions.get === 'function') ? sessions.get(v.sid) : null;
+          if (!sess || !sess.header) { S.privRestoreErr = '恢复后仍拿不到 Session'; S.privRestoreAt = Date.now(); return { ok: false, why: S.privRestoreErr } }
+          if (normPath(sess.header.cwd) !== normPath(STATE_DIR)) { S.privRestoreErr = '恢复后 cwd 不匹配'; S.privRestoreAt = Date.now(); return { ok: false, why: S.privRestoreErr } }
+          const pol = (sp && typeof sp.resolve === 'function') ? sp.resolve({ session: sess }) : null;
+          if (!pol) { S.privRestoreErr = '恢复后取不到沙箱策略'; S.privRestoreAt = Date.now(); return { ok: false, why: S.privRestoreErr } }
+          if (pol.mode === 'read-only') { S.privRestoreErr = '会话策略是只读，不写状态'; S.privRestoreAt = Date.now(); return { ok: false, why: S.privRestoreErr } }
+          S.privRestoreAt = Date.now(); S.privRestoreErr = '';
+          S.privRestoreOk = true;
+          return { ok: true, restored: true };
+        })().finally(() => { privRestoreInFlight = null });
+        privRestoreInFlight = { sid: sid, promise: promise };
+        return promise;
+      };
       let stateWriteTail = Promise.resolve();
       let stateWriteGeneration = 0;
       const saveState = async () => {
@@ -400,11 +492,48 @@ return {
           //   宿主插件不在任何会话里，省略策略就走部署默认（workspaceRoot=process.cwd()）⇒ 写私人根必被拒。
           //   官方做法是 sandboxPolicy.resolve({ session }) —— session 必须是**已经加载的真实 Session**
           //   （SessionStore.get(id)），并且它自己的 cwd 必须就是私人物理根才借；否则退回部署默认。
-          const pol = privatePolicy();
-          if (prev && prev !== text) {
-            await fsSvc.writeText(await fsSvc.resolve(STATE_FILE + '.bak'), prev, undefined, undefined, pol);
+          // A114/A115（2026-11-26 复审修正）：**先按现有策略写**，写不动才去恢复会话。
+          //   旧版一拿不到 live 策略就抛 ⇒ 连"部署默认策略本来能写"的场景（首次安装、私人根正好在
+          //   部署 workspaceRoot 下）都被我打断了。正确顺序：
+          //     ① pol 有值 ⇒ 用它；pol 为 null ⇒ 省略第 5 个参数，让 fsSvc 自己按部署默认判定；
+          //     ② 只有真的抛 FS_SANDBOX_DENIED、且没有 live 策略、且身份可核验时，才恢复一次并重试**同一份快照**；
+          //     ③ 仍然失败 ⇒ 照旧抛出（主文件失败继续停派发），绝不请求全局扩权。
+          let pol = privatePolicy();
+          const isDenied = (e) => {
+            const code = String((e && e.code) || '');
+            const msg = String((e && e.message) || e || '');
+            return code === 'FS_SANDBOX_DENIED' || /file access denied under (workspace-write|read-only) mode/i.test(msg);
+          };
+          const writeMain = async (p) => {
+            const target = await fsSvc.resolve(STATE_FILE);
+            return (p === null) ? fsSvc.writeText(target, text) : fsSvc.writeText(target, text, undefined, undefined, p);
+          };
+          try {
+            await writeMain(pol);
+          } catch (e) {
+            if (!isDenied(e) || pol) throw e;          // 不是沙箱拒绝，或本来就有策略 ⇒ 直接失败
+            const rs = await ensurePrivateSession();
+            const pol2 = (rs && rs.ok) ? privatePolicy() : null;
+            if (!pol2) {
+              const why = String((rs && rs.why) || S.privRestoreErr || '拿不到会话策略');
+              const err2 = new Error('saveState: 写私人根被沙箱拒绝，且未能恢复可用策略（' + why + '）');
+              err2.code = 'FS_SANDBOX_DENIED';
+              throw err2;
+            }
+            pol = pol2;
+            await writeMain(pol);                      // 重试同一份快照
           }
-          await fsSvc.writeText(await fsSvc.resolve(STATE_FILE), text, undefined, undefined, pol);
+          // A113（2026-11-26）：**备份失败不能吞掉整次保存**。
+          //   实测 11-26：`.bak` 的写入先抛 FS_SANDBOX_DENIED，用户看到的是"写 state.json.bak 被拒"，
+          //   而真正要紧的 state.json 那次写入根本没执行。备份是锦上添花，主写入才是本体。
+          if (prev && prev !== text) {
+            try { await fsSvc.writeText(await fsSvc.resolve(STATE_FILE + '.bak'), prev, undefined, undefined, pol) }
+            catch (e) {
+              // A113/A114：备份失败**非致命**，但必须留下诊断字段（否则"备份坏了"这件事永远看不见）
+              S.bakErrAt = Date.now();
+              S.bakErr = String((e && (e.code || e.name)) || 'unknown').slice(0, 160);
+            }
+          }
           lastSavedText = text;
           S.lastSaveOk = true; S.lastError = '';
           S.saveBlocked = false; S.saveBlockedAt = 0; S.saveBlockedMsg = '';
@@ -1574,11 +1703,8 @@ const roundPromptLive = async (date, reason, since, mode) => {
                                                  reasoningEffort: sel.reasoningEffort ? String(sel.reasoningEffort) : '' } : null };
         } catch (e) { return { ok: false, error: String((e && e.message) || e) } }
       };
-      //: A103（2026-10-01，另一会话核到）：配置里 `routes[].model = 'DeepSeek-V4-Flash-0731'` 已于 09-29 下线，
-      //:   但**没有造成故障** —— 因为这条 adopt 路径原来把 `setRouteModel` 的返回值丢掉了：`selectModel` 没选中时
-      //:   会话会**静默保留原模型**（本机正好是 `agent-default-model`＝deepseek/DeepSeek-V4.1-Flash，能用）。
-      //:   于是"配置写着一个不存在的模型"这件事**看不见**。这里把结果记进 state，由 `/state` 回显 ——
-      //:   只加"可见提示"，**不动配置**（用户口径：先查机制，别急着改线上配置）。
+      // Record the result of an explicit route-model selection for the state endpoint.
+      // An unavailable model leaves the current session model in place.
       const noteRouteModel = async (sc, id, route) => {
         let sm = null;
         try { sm = await setRouteModel(sc, id, route) } catch (e) { sm = { ok: false, error: String((e && e.message) || e) } }
@@ -1652,14 +1778,14 @@ const roundPromptLive = async (date, reason, since, mode) => {
         const stored = String(S[key] || '');
         // A29：**只有「确定死了」（false）才清槽**；未知（null）按「还在」处理 ⇒ 保留原槽、不认领、不新建。
         const alive = stored ? await liveOk(sc, stored, wc) : false;
-        if (stored && alive !== false) { await noteRouteModel(sc, stored, route); return stored }
+        if (stored && alive !== false) return stored;
         if (stored) { steps.push('slot-stale:' + route); S[key] = '' }
         // ② 槽空时**先按标题认回既有会话**（重启后槽没持久化也别新建）
         try {
           const ids = await wsSessionIds(wc);
           const other = String((String(route) === String(R0) ? S.sessParatera : S.sessThu) || '');
           const found = await adoptRouteByTitle(ids, routeTitles(route), [other], steps);
-          if (found) { S[key] = found; await noteRouteModel(sc, found, route); return found }
+          if (found) { S[key] = found; return found }
         } catch (e) { steps.push('adopt-title:err') }
         // A29：**只有「槽本来就是空的」才允许拿当前会话顶替**。曾经有过 stored（哪怕是死的）就绝不用当前
         //   会话顶替 —— 那正是「多出一个主 agent」的直接来源。
@@ -1674,7 +1800,7 @@ const roundPromptLive = async (date, reason, since, mode) => {
         if (made) await retireCwdStale(steps, [made]);        // A61：有了 cwd 正确的新槽会话，退掉旧 cwd 的那些
         return made;
       };
-      const pickRoute = async (route, why) => {
+      const pickRoute = async (route, why, switchModel = false) => {
         // A109（2026-11-21）：**单槽位**。线路只当"这条会话该用哪个模型"的标签：
         //   · 永远只用第 1 个槽的会话（不新建第二个）；
         //   · 想要另一条线路 ⇒ 在这条会话上 selectModel 换模型（high 强度），不换会话。
@@ -1701,6 +1827,13 @@ const roundPromptLive = async (date, reason, since, mode) => {
           await saveState();
           return { ok: true, route: r, sessionId: made, changed: changed0, retargeted: true, model: ROUTE_MODELS[r], steps };
         }
+        // Existing sessions keep their selected model during startup, automatic collection and catch-up.
+        // A switch belongs to this explicit request; an unsuccessful request cannot arm a later run.
+        const sm = switchModel ? await noteRouteModel(ctx.get('sessionController'), id, r) : null;
+        if (switchModel && !(sm && sm.ok && sm.selected)) {
+          return { ok: false, error: '无法切换到所选模型', model: sm, steps };
+        }
+        if (sm) steps.push('model:' + sm.selected.provider + '/' + sm.selected.model);
         const changed = String(S.sessionId || '') !== id;
         S.sessionId = id; S.mainSessionId = id;
         S.routePick = r; S.routeAt = Date.now(); S.routeWhy = String(why || '');
@@ -1710,18 +1843,9 @@ const roundPromptLive = async (date, reason, since, mode) => {
           //（2026-09-17 踩过：切到 线路1 会话后仍显示老会话的 ctxWindow=1000000 / ctxLimit=900000）
           S.ctxTokens = 0; S.ctxWindow = 0; S.ctxLimit = 0; S.ctxPct = 0;
         }
-        // A109：**切线路＝在这条会话上换模型**（同一个会话，不另建）。只有真的换了目标时才调 selectModel。
-        if (String(S.routeModelPick || '') !== String(r)) {
-          const scM = ctx.get('sessionController');
-          if (scM) {
-            const sm = await noteRouteModel(scM, id, r);
-            steps.push('model:' + (sm && sm.ok ? String(sm.selected.provider) + '/' + String(sm.selected.model) : 'err'));
-            S.routeModelPick = r;
-          }
-        }
         steps.push('active:' + id.slice(0, 12) + (changed ? '(changed)' : '(same)'));
         await saveState();
-        return { ok: true, route: r, sessionId: id, changed, model: ROUTE_MODELS[r], steps };
+        return { ok: true, route: r, sessionId: id, changed, ...(sm ? { model: sm.selected } : {}), steps };
       };
       // 插件侧连通性探测（**唤醒之前**就定好，不花主 agent 的步数）：无凭据的可达性检查 ——
       //   任何 HTTP 响应（含 401/403）都算"网关活着"；5xx / 网络错误 / 超时算"不通"。
@@ -1856,7 +1980,7 @@ const roundPromptLive = async (date, reason, since, mode) => {
                             + (pr0.err ? '（' + pr0.err + '）' : pr0.status ? '（HTTP ' + pr0.status + '）' : '')
                             + ' ⇒ 没跑这一轮，上次采集时间不变' };
           }
-          const pickM = await pickRoute(only, 'menu:' + only);
+          const pickM = await pickRoute(only, 'menu:' + only, true);
           if (!pickM || !pickM.ok) return { ok: false, error: (pickM && pickM.error) || '选会话失败', probe: pr0 };
           return await fireRound(sc, reason, pickM, String(o.forceMode || 'full'), pr0);
         }
@@ -1879,7 +2003,7 @@ const roundPromptLive = async (date, reason, since, mode) => {
                      error: '线路不通 ⇒ 按策略「不通则不跑」没有跑这一轮（可用侧栏「获取」下拉换一条线路手动跑）' };
           }
           mode = (pol === 'pipeline' && !o.forceMode) ? 'pipeline' : mode;
-          const pick2 = await pickRoute(R1, 'gw-down:' + pol + (o.forceRoute ? ':manual' : ''));
+          const pick2 = await pickRoute(R1, 'gw-down:' + pol + (o.forceRoute ? ':manual' : ''), !!o.forceRoute);
           if (!pick2 || !pick2.ok) return { ok: false, error: (pick2 && pick2.error) || '切付费会话失败', probe: probeRes };
           return await fireRound(sc, reason, pick2, mode, probeRes);
         }
@@ -2115,16 +2239,9 @@ const roundPromptLive = async (date, reason, since, mode) => {
           const abn = (st.lastReason === 'error') ? st.lastReason : '';
           // A111（2026-11-23）：**"继续"也是派发**，同样必须先过持久化这道门。
           //   写不进 state 时注入「继续」只会让下一轮同样白跑，还把槽位继续占住。
-          // A102（2026-10-01，另一会话在 用户 侧定案）：**这个签名是可重试的** ——
-          //   服务端流式返回**较长的工具调用参数**时，会把一个事件的 JSON 劈成两帧（后一帧还换个新 id、
-          //   裸正文没有 JSON 外壳），客户端于是报 `Unterminated string in JSON` /
-          //   `Unexpected end of JSON input`。现场（本会话 2026-10-01，本地时间）：17:13:30–17:32:54
-          //   **6 连败全是这个签名**，17:35 自己就过了 ⇒ 间歇性、与线路无关、与我们的数据无关。
-          //   所以三条：① 认签名并**落盘**（`streamErrors` 攒最近 8 条，供事后对账）
-          //            ② 退避重试（这个签名 5 次、每次等 60 秒；普通错误照旧 3 次、不等 —— 老行为不变）
-          //            ③ 试满仍是这个签名 ⇒ **停在原会话、不换线路**（用户 2026-10-01 定案：「不需要换到另一条
-          //               线路重跑，他自己服务侧就是会有问题，像现在回复继续就好了」——换线路必然去花
-          //               paratera 的钱）；也不靠"缩输出"规避（触发条件与输出长度无关）
+          // A truncated streaming event may give either of these JSON errors.
+          // Persist the signature and back off before retrying the same session.
+          // After the retry limit, stop and leave the selected route in place.
           const errMsg = String(st.lastErrorMsg || '');
           const flaky = /Unterminated string in JSON|Unexpected end of JSON input/i.test(errMsg);
           // A107（2026-11-21 用户："随时都在运行，占一个槽位，有毛病吧"）：**限流不重试**。
@@ -2410,6 +2527,8 @@ const roundPromptLive = async (date, reason, since, mode) => {
         seeded: S.seeded, wakeText: slim ? '' : TPL(WAKE_TEXT), wakeTextLen: TPL(WAKE_TEXT).length, lastError: S.lastError,
         routeError: S.lastRouteError, saveOk: S.lastSaveOk,
         stateReadBlocked: !!S.stateReadBlocked, saveBlocked: !!S.saveBlocked,
+        stateRecoveryError: String(S.privRestoreErr || ''), backupWriteError: String(S.bakErr || ''),
+        backupWriteErrorAt: Number(S.bakErrAt || 0),
         quoteId: S.quote ? String(S.quote.id || '') : '',
         quoteNo: S.quote ? String(S.quote.no || '') : '',
         quoteText: S.quote ? String(S.quote.text || '') : '',
@@ -2733,7 +2852,7 @@ const roundPromptLive = async (date, reason, since, mode) => {
         const b = body || {};
         const want = String(b.route || S.routePick || DEFAULT_ROUTE);
         if (routeIds().indexOf(String(want)) < 0) return { ok: false, error: 'route 只能是 ' + routeIds().join(' / ') };
-        const r = await pickRoute(want, String(b.why || 'manual'));
+        const r = await pickRoute(want, String(b.why || 'manual'), true);
         return Object.assign({ ok: !!(r && r.ok), routePick: S.routePick, sessThu: S.sessThu, sessParatera: S.sessParatera }, r);
       });
       // **把一个已有会话挂进某个槽**（2026-09-17 加的补救手段）：例如把某个上下文很长的老会话挂成 paratera 槽，

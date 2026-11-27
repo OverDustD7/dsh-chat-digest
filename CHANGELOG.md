@@ -3,7 +3,16 @@
 All notable changes to this package. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.5.3] — 2026-11-24 (unreleased)
+## [1.5.4] — 2026-11-27
+
+- Recover the verified resident session when the first state write after a host restart needs its
+  existing DSH policy. Keep automatic collection paused when state cannot be saved.
+- Keep the session's selected model during automatic collection. An explicit route selection changes
+  the model only for that request.
+- Report backup write failures separately from the main state write.
+- Generalized inherited examples and comments and removed an unused, dated handoff generator.
+
+## [1.5.3] — 2026-11-24
 
 - Keep the panel, inbox and import pipeline in the npm candidate. Run optional import with an external
   Python environment, a user-supplied WeChat decryptor and a QQ adapter/exporter outside the package.

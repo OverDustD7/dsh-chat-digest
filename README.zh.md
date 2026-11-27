@@ -14,9 +14,7 @@
 - 状态：维护中。
 - 支持：Windows x64 上的 DSH 网页界面，DSH `>= 0.1.5-rc.1`，Node `>= 22.5`。
 - 其他平台：CI 配置了 Windows 与 Linux 的核心探针；Linux、macOS 的实际宿主流程尚未验证。不提供独立托管服务或手机客户端。
-- 当前版本：**1.5.3**，发布之后 `dsh plugin add` 装的就是它。安装时用 dsh plugin --profile web add dsh-chat-digest@1.5.3，
-  用 
-pm view dsh-chat-digest version 核对装到的版本。
+- 本版为 **1.5.4**。
 
 面板、一条常驻主 agent 会话（切换线路＝在同一个会话上换模型）、以及两者之间的 HTTP 契约，都由这个插件管。按定时，或者你点一下
 面板顶部横条上的**「获取」**，那条会话就去读你的聊天，把条目挑出来发回来；每条都能直接链到原始文件或图片。核心不需要
@@ -37,7 +35,7 @@ pm view dsh-chat-digest version 核对装到的版本。
 ## 安装
 
 ```sh
-dsh plugin --profile {{PROFILE}} add dsh-chat-digest
+dsh plugin --profile {{PROFILE}} add dsh-chat-digest@1.5.4
 ```
 
 `{{PROFILE}}` 是 DSH 网页界面背后的那个 profile（常见为 `web`）。安装本身已经把它写进 profile 的
@@ -192,7 +190,7 @@ dsh plugin --profile {{PROFILE}} add dsh-chat-digest
 `%TEMP%\dsh-chat-digest\`）的版本升级上来时，这些位置只作为一次性迁移来源被读一次，读完原样留着；
 `state.note` 里记着用的是哪一个。
 
-从本地装配的 1.5.2 升级前，私下备份原插件包、profile 配置和数据。启用 1.5.3 前，把插件配置的
+从本地装配的 1.5.2 升级前，私下备份原插件包、profile 配置和数据。启用本版前，把插件配置的
 `pythonRuntime` 改为 `legacy` 或删掉这项。用微信或 QQ 导入的，先按下节迁移外置工具。
 `localDir` 和 `stateDir` 继续指向原来的私人目录。
 
@@ -211,6 +209,10 @@ dsh plugin --profile {{PROFILE}} remove dsh-chat-digest
 因为那目录是唯一一份。
 
 ## 已知限制与排错
+
+宿主重启后，如果状态写入被拒且原常驻会话尚未加载，插件会核实会话身份，恢复它后按现有 DSH 策略重试一次。
+写入仍被拒时，自动采集继续暂停。自动采集沿用 DSH 当前选中的模型，明确选择指定线路或模型时可以切换。
+
 
 面板、条目 API 和 inbox 流程使用宿主的 Node.js。需要微信或 QQ 取数时，另外准备 Python 环境并安装
 [`pipeline/requirements.txt`](pipeline/requirements.txt) 中的依赖。把插件配置和私人 `pipeline.yaml`

@@ -257,8 +257,7 @@ def main():
     known = names_from_cache()
     followed = followed_accounts()
     unknown = {b: d for b, d in acc.items() if b not in known}
-    # 本地推送（他已关注号）也补一份：**只用来解出真名**（修 #27：contact 表的备注名 ≠ 真号名，
-    # 「艾生活｜秋季学期选课安排」实际号是「艾生权」），不进"未关注候选池"——这些号他本来就关注了。
+    # 本地推送用于核对公众号名称，已关注账号跳过候选列表。
     push = {}
     bp = os.path.join(PROFILE, "output", "window", "biz_articles.jsonl")
     if os.path.exists(bp):

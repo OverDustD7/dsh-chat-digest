@@ -1,12 +1,7 @@
 # -*- coding: utf-8 -*-
 """check_knowledge_style.py — 知识库文档的**写法自检**：禁止"补录块"（2026-09-15）。
 
-规则出处（用户 2026-09-12 原话，记在 `docs/EVOLUTION.md` §六）：
-> **维护文档补录的信息直接加进条目即可，不然格式有点混乱**。
-> ❌ **禁止**：在文件末尾追加「XX 补录 / 二次补录 / 09-02 新增」这类**新块** —— 它会让同一类信息散在多处。
-
-为什么要有这个脚本：**这条规则 2026-09-15 又被违反了**（`people.md` 3 个补录块、`channels.md` 2 个、
-`resources.md` 3 个）。只写进规范、没有任何东西能检查的约束，迟早会被重新破坏 —— 所以把它变成一条能跑出 FAIL 的命令。
+知识文档的补充内容应并入相关条目，以免同类信息分散。
 
 用法:
     python tools\\check_knowledge_style.py          # 检查 docs\\knowledge\\*.md + docs\\resources.md
@@ -71,7 +66,7 @@ def main():
     print("\n检查 %d 个文件 ｜ 违规标题 %d 个" % (len(files), bad_total))
     if bad_total:
         print("修法：%s" % OK_HINT)
-        print("（规则：`docs/EVOLUTION.md` §六，用户原话「维护文档补录的信息直接加进条目即可，不然格式有点混乱」）")
+        print("补充信息请并入相应的现有条目。")
         return 1
     print("OK：没有「补录 / 二次补录 / XX 补（ / XX 新增（」这类新块。")
     return 0

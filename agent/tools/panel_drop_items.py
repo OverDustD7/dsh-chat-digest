@@ -6,8 +6,8 @@
 `docs\\archive\\<date>_expired.md` ③ 再整表回写 ④ 回读自证。
 
 用法（在本工具目录下）：
-    python tools\\panel_drop_items.py --reason "用户 09-13 说已选完课" calc-cjl
-    python tools\\panel_drop_items.py --dry-run calc-cjl        # 只看会删什么，不写
+    python panel_drop_items.py --reason "示例条目已完成" sample-item-id
+    python panel_drop_items.py --dry-run sample-item-id
 归档默认写到 `docs\\archive\\<今天>_expired.md`（--archive 可指定）。
 """
 import argparse

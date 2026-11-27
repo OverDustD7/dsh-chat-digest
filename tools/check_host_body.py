@@ -261,7 +261,8 @@ for frag in ("const DIR =", "const WAKE_TEXT =", "apply(ctx)",
              # A68：提示词在**发车那一刻**从磁盘读（改提示词不必再重启宿主）
              "const renderRound = (tpl, date, reason, since, mode)", "const readPromptNow = async (name, privateSide)",
              "if (S.stateLoading || S.stateReadBlocked)", "if (await saveState() !== 'saved')",
-             "const pol = privatePolicy();",
+             "let pol = privatePolicy();", "const ensurePrivateSession = async () => {",
+             "const privateIdentityCheck = async () => {", "const privatePolicy = () => {",
              "const roundPromptLive = async (date, reason, since, mode)", "await roundPromptLive(date, reason,",
              "const body = (typeof tpl === 'string' && tpl) ? TPL(tpl, date, mode, since)",
              "return TPL(body + ask, date, mode, since)"):
